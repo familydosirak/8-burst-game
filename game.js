@@ -61,15 +61,15 @@ import {
   // 뒤쪽 발사가 가능하도록 바닥에서 조금 위에 배치한다.
   const LAUNCH_Y = FLOOR - BALL_RADIUS - 62;
 
-  const MIN_POWER = 7;
-  const MAX_POWER = 19;
+  const MIN_POWER = 5;
+  const MAX_POWER = 22;
   const CHARGE_SPEED = 13;
 
   // 180도까지 허용하면 발사 공의 완전한 뒤쪽도 조준할 수 있다.
   const MAX_AIM_ANGLE_DEGREES = 180;
 
-  const BLAST_RADIUS = 135;
-  const BLAST_FORCE = 16;
+  const BLAST_RADIUS = 150;
+  const BLAST_FORCE = 18;
 
   /*
    * 검은 구슬 설정
