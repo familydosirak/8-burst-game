@@ -111,8 +111,8 @@ export async function submitWeeklyScore({ nickname, score, bestCombo, turn }) {
   const scoreRef = doc(db, "weeklyRankings", weekId, "scores", user.uid);
 
   const cleanNickname = sanitizeNickname(nickname);
-  const cleanScore = normalizeInteger(score, 0, 1_000_000_000);
-  const cleanBestCombo = normalizeInteger(bestCombo, 0, 1_000_000);
+  const cleanScore = normalizeInteger(score, 0, 1_000_000_000_000);
+  const cleanBestCombo = normalizeInteger(bestCombo, 0, 1_000_0000);
   const cleanTurn = normalizeInteger(turn, 0, 1_000_000);
 
   return runTransaction(db, async transaction => {

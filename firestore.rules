@@ -32,7 +32,7 @@ service cloud.firestore {
         && request.resource.data.nickname.size() <= 12
         && request.resource.data.score is int
         && request.resource.data.score >= 0
-        && request.resource.data.score <= 1000000000
+        && request.resource.data.score <= 1000000000000
         && request.resource.data.bestCombo is int
         && request.resource.data.bestCombo >= 0
         && request.resource.data.bestCombo <= 1000000
