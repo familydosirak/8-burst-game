@@ -75,7 +75,7 @@ import {
   const BASE_COMBO_SCORE = 80;
 
   // 콤보마다 적용되는 점수 배율
-  const COMBO_SCORE_MULTIPLIER = 1.5;
+  const COMBO_SCORE_MULTIPLIER = 1.7;
 
   /*
    * 검은 구슬 설정
@@ -538,12 +538,14 @@ import {
       combo
     );
 
-    const gained =
+    // 콤보마다 1.5배 증가하고 소수점 이하는 버린다.
+    const gained = Math.floor(
       BASE_COMBO_SCORE *
       Math.pow(
         COMBO_SCORE_MULTIPLIER,
         combo - 1
-      );
+      )
+    );
 
     score += gained;
 
