@@ -53,9 +53,10 @@ import {
   const TOP = 20;
   const FLOOR = 590;
 
-  const BALL_RADIUS = 25;
-  const OVERLOAD_LIMIT = 180;
-
+  const BALL_RADIUS = 18;
+  // 화면에 공이 이 개수 이상이면 과부하 상태가 된다.
+  const BALL_COUNT_LIMIT = 75;
+  
   const SHOOT_X = W / 2;
 
   // 뒤쪽 발사가 가능하도록 바닥에서 조금 위에 배치한다.
@@ -68,14 +69,14 @@ import {
   // 180도까지 허용하면 발사 공의 완전한 뒤쪽도 조준할 수 있다.
   const MAX_AIM_ANGLE_DEGREES = 180;
 
-  const BLAST_RADIUS = 135;
-  const BLAST_FORCE = 18;
+  const BLAST_RADIUS = 123;
+  const BLAST_FORCE = 16;
 
   // 첫 번째 폭발 점수
-  const BASE_COMBO_SCORE = 80;
+  const BASE_COMBO_SCORE = 8;
 
   // 콤보마다 적용되는 점수 배율
-  const COMBO_SCORE_MULTIPLIER = 1.7;
+  const COMBO_SCORE_MULTIPLIER = 2;
 
   /*
   * 숫자 생성 밸런스
@@ -104,7 +105,7 @@ import {
    * BLACK_BALL_OVERLOAD:
    *   검은 구슬 한 개가 차지하는 과부하 수치다.
    */
-  const BLACK_BALL_INTERVAL = 20;
+  const BLACK_BALL_INTERVAL = 10;
   const BLACK_BALL_OVERLOAD = 5;
   const BLACK_BALL_COLOR = "#111111";
 
@@ -289,22 +290,17 @@ import {
         : "var(--accent)";
   }
 
-  function fieldLoad() {
-    let total = 0;
-
-    for (let i = 0; i < balls.length; i++) {
-      const ball = balls[i];
-
-      total += ball.isBlack
-        ? BLACK_BALL_OVERLOAD
-        : ball.number;
-    }
-
-    return total;
+  /**
+   * 현재 필드에 존재하는 공의 개수를 반환한다.
+   *
+   * 일반 숫자 공과 검은 구슬을 모두 1개로 계산한다.
+   */
+  function fieldBallCount() {
+    return balls.length;
   }
 
   function updateHud() {
-    const load = fieldLoad();
+    const load = fieldBallCount();
 
     const powerPercent = charging
       ? ((chargePower - MIN_POWER) / (MAX_POWER - MIN_POWER)) * 100
@@ -315,12 +311,25 @@ import {
     ui.best.textContent = bestCombo;
     ui.turn.textContent = turn;
 
-    ui.load.textContent = load;
-    ui.loadBar.style.width =
-      `${Math.min(100, (load / OVERLOAD_LIMIT) * 100)}%`;
+   const ballCount =
+    fieldBallCount();
+
+  ui.load.textContent =
+    ballCount;
+
+  ui.loadBar.style.width =
+    `${Math.min(
+      100,
+      (
+        ballCount /
+        BALL_COUNT_LIMIT
+      ) * 100
+    )}%`;
 
     ui.loadBar.style.background =
-      load >= OVERLOAD_LIMIT ? COLORS.red : "var(--accent)";
+    ballCount >= BALL_COUNT_LIMIT
+      ? COLORS.red
+      : "var(--accent)";
 
     ui.powerBar.style.width = `${powerPercent}%`;
     ui.powerText.textContent = charging
@@ -425,13 +434,13 @@ import {
 
   function seedField() {
     [4, 5, 4].forEach((count, row) => {
-      const gap = 68;
+      const gap = 47;
       const startX = W / 2 - ((count - 1) * gap) / 2;
 
       for (let i = 0; i < count; i++) {
         addBall(
           startX + i * gap + (row % 2 ? 10 : -10),
-          92 + row * 72,
+          92 + row * 42,
           randomNumber()
         );
       }
@@ -439,8 +448,8 @@ import {
   }
 
   function waveAmountForTurn(currentTurn) {
-    // 초반 4개에서 시작하여 6턴마다 한 개씩 증가한다.
-    return Math.min(12, 4 + Math.floor(currentTurn / 6));
+    // 초반 6개에서 시작하여 6턴마다 한 개씩 증가한다.
+    return Math.min(16, 6 + Math.floor(currentTurn / 6));
   }
 
   /**
@@ -1364,8 +1373,8 @@ import {
 
     if (overloadShot) {
       if (
-        fieldLoad() >=
-        OVERLOAD_LIMIT
+        fieldBallCount() >=
+        BALL_COUNT_LIMIT
       ) {
         gameOver = true;
 
@@ -1422,8 +1431,8 @@ import {
       );
 
       if (
-        fieldLoad() >=
-        OVERLOAD_LIMIT
+        fieldBallCount() >=
+        BALL_COUNT_LIMIT
       ) {
         overload = true;
 
@@ -2115,9 +2124,9 @@ import {
     ctx.beginPath();
 
     ctx.arc(
-      position.x - 8,
-      position.y - 9,
-      7,
+      position.x - 6,
+      position.y - 7,
+      5,
       0,
       Math.PI * 2
     );
@@ -2135,7 +2144,7 @@ import {
         );
 
       ctx.font =
-        "900 22px system-ui";
+        "900 18px system-ui";
 
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
