@@ -71,6 +71,12 @@ import {
   const BLAST_RADIUS = 150;
   const BLAST_FORCE = 18;
 
+  // 첫 번째 폭발 점수
+  const BASE_COMBO_SCORE = 800;
+
+  // 콤보마다 적용되는 점수 배율
+  const COMBO_SCORE_MULTIPLIER = 2;
+
   /*
    * 검은 구슬 설정
    *
@@ -524,14 +530,20 @@ import {
    * SCORE
    * ======================================================= */
 
-  function addScore(base, removedCount) {
+  function addScore() {
     combo++;
-    bestCombo = Math.max(bestCombo, combo);
 
-    const comboMultiplier = combo * combo;
+    bestCombo = Math.max(
+      bestCombo,
+      combo
+    );
+
     const gained =
-      base * comboMultiplier +
-      removedCount * 50;
+      BASE_COMBO_SCORE *
+      Math.pow(
+        COMBO_SCORE_MULTIPLIER,
+        combo - 1
+      );
 
     score += gained;
 
@@ -806,7 +818,7 @@ import {
     removeBall(target);
 
     const gained =
-      addScore(125, 1);
+      addScore();
 
     const velocityX =
       shotBall.body.velocity.x;
@@ -877,7 +889,7 @@ import {
     removeBall(second);
 
     const gained =
-      addScore(190, 2);
+      addScore();
 
     createExplosion(
       x,
