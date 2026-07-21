@@ -289,6 +289,23 @@ import {
   // 한 게임 결과에 대해 닉네임 창을 한 번만 연다.
   let rankingModalOpened = false;
   let rankingSubmitting = false;
+  /*
+   * 랭킹 새로고침 쿨타임
+   *
+   * 종료 시각을 localStorage에 저장하므로
+   * 페이지를 새로고침해도 남은 쿨타임이 유지된다.
+   */
+  const RANKING_REFRESH_COOLDOWN_MS = 30 * 1000;
+  const RANKING_REFRESH_STORAGE_KEY =
+    "burst8RankingRefreshCooldownUntil";
+
+  let rankingRefreshTimer = null;
+  let rankingRefreshCooldownUntil =
+    Number(
+      localStorage.getItem(
+        RANKING_REFRESH_STORAGE_KEY
+      )
+    ) || 0;
 
   /**
    * 필드에 적게 있는 숫자는 조금 더 잘 나오고,
@@ -2738,6 +2755,118 @@ import {
     }
   }
 
+  function rankingRefreshRemainingSeconds() {
+    return Math.max(
+      0,
+      Math.ceil(
+        (
+          rankingRefreshCooldownUntil -
+          Date.now()
+        ) / 1000
+      )
+    );
+  }
+
+  function stopRankingRefreshTimer() {
+    if (!rankingRefreshTimer) {
+      return;
+    }
+
+    clearInterval(
+      rankingRefreshTimer
+    );
+
+    rankingRefreshTimer = null;
+  }
+
+  function updateRankingRefreshButton() {
+    const remainingSeconds =
+      rankingRefreshRemainingSeconds();
+
+    if (remainingSeconds > 0) {
+      ui.refreshRankingButton.disabled = true;
+      ui.refreshRankingButton.textContent =
+        `새로고침 (${remainingSeconds}초)`;
+
+      return;
+    }
+
+    stopRankingRefreshTimer();
+
+    rankingRefreshCooldownUntil = 0;
+
+    localStorage.removeItem(
+      RANKING_REFRESH_STORAGE_KEY
+    );
+
+    ui.refreshRankingButton.disabled = false;
+    ui.refreshRankingButton.textContent =
+      "새로고침";
+  }
+
+  function startRankingRefreshCooldown() {
+    rankingRefreshCooldownUntil =
+      Date.now() +
+      RANKING_REFRESH_COOLDOWN_MS;
+
+    localStorage.setItem(
+      RANKING_REFRESH_STORAGE_KEY,
+      String(
+        rankingRefreshCooldownUntil
+      )
+    );
+
+    stopRankingRefreshTimer();
+    updateRankingRefreshButton();
+
+    rankingRefreshTimer = setInterval(
+      updateRankingRefreshButton,
+      250
+    );
+  }
+
+  function restoreRankingRefreshCooldown() {
+    if (
+      rankingRefreshCooldownUntil <=
+      Date.now()
+    ) {
+      updateRankingRefreshButton();
+      return;
+    }
+
+    updateRankingRefreshButton();
+
+    rankingRefreshTimer = setInterval(
+      updateRankingRefreshButton,
+      250
+    );
+  }
+
+  async function handleRankingRefresh(event) {
+    /*
+     * 버튼이 폼 안으로 이동하거나 마크업이 변경돼도
+     * 브라우저의 기본 제출 동작이 실행되지 않게 막는다.
+     */
+    event.preventDefault();
+    event.stopPropagation();
+
+    if (
+      rankingRefreshRemainingSeconds() >
+      0
+    ) {
+      updateRankingRefreshButton();
+      return;
+    }
+
+    /*
+     * 조회가 끝나기 전부터 쿨타임을 시작해
+     * 연속 클릭으로 중복 요청이 발생하지 않게 한다.
+     */
+    startRankingRefreshCooldown();
+
+    await renderWeeklyRanking();
+  }
+
   /* =========================================================
    * TURN END
    * ======================================================= */
@@ -4814,7 +4943,7 @@ import {
 
   ui.refreshRankingButton.addEventListener(
     "click",
-    renderWeeklyRanking
+    handleRankingRefresh
   );
 
   ui.submitRankingButton.addEventListener(
@@ -4905,6 +5034,7 @@ import {
 
   resetGame();
   renderWeeklyRanking();
+  restoreRankingRefreshCooldown();
 
   if (isFirebaseConfigured()) {
     initializeRanking().catch(error => {
