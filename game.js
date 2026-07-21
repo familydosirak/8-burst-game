@@ -443,6 +443,36 @@ import {
     return descriptions[type] || "";
   }
 
+  /**
+   * 캔버스 아래 발사 구역에 표시할 짧은 특수공 설명이다.
+   * 왼쪽의 제한된 공간에 맞게 두 줄로 나누어 반환한다.
+   */
+  function specialBallLaunchDescription(type) {
+    const descriptions = {
+      rainbow: [
+        "같은 숫자의 공을",
+        "필드에서 모두 제거"
+      ],
+
+      ice: [
+        "충돌 즉시 폭발하고",
+        "이번 턴 더 오래 미끄러짐"
+      ],
+
+      cloud: [
+        "닿은 숫자 공을 4로 변경",
+        "벽 1회 반사 후 사라짐"
+      ],
+
+      blackHole: [
+        "주변 숫자 공을 흡수",
+        "먹은 수만큼 강한 폭발"
+      ]
+    };
+
+    return descriptions[type] || [];
+  }
+
   function setSpecialBallInfo(value) {
     if (!ui.specialBallInfo) {
       return;
@@ -4443,6 +4473,78 @@ import {
     }
 
     ctx.save();
+
+    /*
+     * 현재 발사 준비 공이 특수공이면
+     * 아이콘 왼쪽의 빈 공간에 짧은 효과 설명을 표시한다.
+     */
+    if (isSpecialShot(currentNumber)) {
+      const descriptionLines =
+        specialBallLaunchDescription(
+          currentNumber
+        );
+
+      const infoX = 24;
+      const infoY = FLOOR + 10;
+      const infoWidth =
+        SHOOT_X - BALL_RADIUS - 48;
+      const infoHeight = 70;
+
+      ctx.fillStyle =
+        "rgba(255,255,255,.055)";
+
+      ctx.fillRect(
+        infoX,
+        infoY,
+        infoWidth,
+        infoHeight
+      );
+
+      ctx.strokeStyle =
+        "rgba(255,255,255,.16)";
+
+      ctx.lineWidth = 1.5;
+
+      ctx.strokeRect(
+        infoX,
+        infoY,
+        infoWidth,
+        infoHeight
+      );
+
+      ctx.textAlign = "left";
+      ctx.textBaseline = "middle";
+
+      ctx.fillStyle =
+        shotColor(currentNumber);
+
+      ctx.font =
+        "900 13px system-ui";
+
+      ctx.fillText(
+        specialBallName(currentNumber),
+        infoX + 13,
+        infoY + 18
+      );
+
+      ctx.fillStyle =
+        "rgba(255,255,255,.82)";
+
+      ctx.font =
+        "700 11px system-ui";
+
+      for (
+        let i = 0;
+        i < descriptionLines.length;
+        i++
+      ) {
+        ctx.fillText(
+          descriptionLines[i],
+          infoX + 13,
+          infoY + 39 + i * 17
+        );
+      }
+    }
 
     /*
      * 현재 발사 공
