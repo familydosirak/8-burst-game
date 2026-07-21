@@ -49,11 +49,11 @@ import {
    * ======================================================= */
 
   const W = 680;
-  const H = 700;
+  const H = 590;
   const TOP = 20;
   const FLOOR = 590;
 
-  const BALL_RADIUS = 24.3;
+  const BALL_RADIUS = 25;
   const OVERLOAD_LIMIT = 180;
 
   const SHOOT_X = W / 2;
@@ -68,14 +68,14 @@ import {
   // 180도까지 허용하면 발사 공의 완전한 뒤쪽도 조준할 수 있다.
   const MAX_AIM_ANGLE_DEGREES = 180;
 
-  const BLAST_RADIUS = 150;
-  const BLAST_FORCE = 18;
+  const BLAST_RADIUS = 120;
+  const BLAST_FORCE = 19;
 
   // 첫 번째 폭발 점수
-  const BASE_COMBO_SCORE = 800;
+  const BASE_COMBO_SCORE = 80;
 
   // 콤보마다 적용되는 점수 배율
-  const COMBO_SCORE_MULTIPLIER = 2;
+  const COMBO_SCORE_MULTIPLIER = 1.5;
 
   /*
    * 검은 구슬 설정
