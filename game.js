@@ -68,8 +68,8 @@ import {
   // 180도까지 허용하면 발사 공의 완전한 뒤쪽도 조준할 수 있다.
   const MAX_AIM_ANGLE_DEGREES = 180;
 
-  const BLAST_RADIUS = 130;
-  const BLAST_FORCE = 19;
+  const BLAST_RADIUS = 140;
+  const BLAST_FORCE = 18;
 
   // 첫 번째 폭발 점수
   const BASE_COMBO_SCORE = 80;
