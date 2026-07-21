@@ -103,7 +103,7 @@ import {
   const BASE_COMBO_SCORE = 8;
 
   // 콤보마다 적용되는 점수 배율
-  const COMBO_SCORE_MULTIPLIER = 1.35;
+  const COMBO_SCORE_MULTIPLIER = 1.5;
 
   /*
   * 숫자 생성 밸런스
