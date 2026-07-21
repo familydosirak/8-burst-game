@@ -80,7 +80,7 @@ import {
    * BLACK_BALL_OVERLOAD:
    *   검은 구슬 한 개가 차지하는 과부하 수치다.
    */
-  const BLACK_BALL_INTERVAL = 25;
+  const BLACK_BALL_INTERVAL = 20;
   const BLACK_BALL_OVERLOAD = 5;
   const BLACK_BALL_COLOR = "#111111";
 
