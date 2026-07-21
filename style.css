@@ -391,3 +391,21 @@ textarea,
   user-select: text;
   -webkit-touch-callout: default;
 }
+
+.ranking-result {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 3px;
+  white-space: nowrap;
+}
+
+.ranking-score {
+  font-weight: 800;
+}
+
+.ranking-combo {
+  color: var(--yellow);
+  font-size: 12px;
+  font-weight: 700;
+}

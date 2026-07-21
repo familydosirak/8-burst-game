@@ -1331,11 +1331,26 @@ import {
           player.textContent = item.nickname;
 
           const resultBox = document.createElement("span");
-          resultBox.className = "ranking-score";
-          resultBox.textContent = `${item.score.toLocaleString()}점`;
-          resultBox.title = `최고 콤보 ${item.bestCombo} · ${item.turn}턴`;
+          resultBox.className = "ranking-result";
 
-          row.append(rank, player, resultBox);
+          const scoreText = document.createElement("strong");
+          scoreText.className = "ranking-score";
+          scoreText.textContent = `${item.score.toLocaleString()}점`;
+
+          const comboText = document.createElement("span");
+          comboText.className = "ranking-combo";
+          comboText.textContent = `최고 ${item.bestCombo ?? 0}콤보`;
+
+          resultBox.append(
+            scoreText,
+            comboText
+          );
+
+          row.append(
+            rank,
+            player,
+            resultBox
+          );
           return row;
         })
       );
