@@ -136,10 +136,16 @@ canvas {
   width: 100%;
   height: auto;
   cursor: crosshair;
-  touch-action: none;
-  user-select: none;
-}
 
+  /* 모바일 스크롤, 확대, 브라우저 제스처 차단 */
+  touch-action: none;
+
+  /* 드래그 선택 및 끌기 방지 */
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-user-drag: none;
+}
 canvas.charging {
   cursor: grabbing;
 }
@@ -351,4 +357,37 @@ canvas.charging {
 .button:disabled {
   cursor: wait;
   opacity: 0.55;
+}
+
+/* 모바일 드래그 중 텍스트 선택 방지 */
+html,
+body,
+.app,
+.canvas-wrap,
+canvas,
+button {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+/* 게임 조작 중 화면 스크롤·당겨서 새로고침 방지 */
+html,
+body {
+  overscroll-behavior: none;
+}
+
+/* 캔버스와 버튼이 이미지처럼 끌리는 현상 방지 */
+canvas,
+button {
+  -webkit-user-drag: none;
+}
+
+/* 닉네임 입력창은 커서 이동·선택·붙여넣기 허용 */
+input,
+textarea,
+.text-input {
+  -webkit-user-select: text;
+  user-select: text;
+  -webkit-touch-callout: default;
 }

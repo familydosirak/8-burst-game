@@ -68,7 +68,7 @@ import {
   // 180도까지 허용하면 발사 공의 완전한 뒤쪽도 조준할 수 있다.
   const MAX_AIM_ANGLE_DEGREES = 180;
 
-  const BLAST_RADIUS = 120;
+  const BLAST_RADIUS = 130;
   const BLAST_FORCE = 19;
 
   // 첫 번째 폭발 점수
@@ -357,50 +357,122 @@ import {
     return Math.min(12, 4 + Math.floor(currentTurn / 6));
   }
 
+  /**
+   * 현재 턴에 맞는 개수만큼 새로운 숫자 공을 추가한다.
+   *
+   * 1. 먼저 임의의 위치에 배치를 시도한다.
+   * 2. 임의 배치에 실패하면 격자 방식으로 빈자리를 검색한다.
+   */
   function addWave() {
     const amount = waveAmountForTurn(turn);
-
     let created = 0;
-    let tries = 0;
 
-    const maxTries = amount * 180;
-    const minimumDistance = BALL_RADIUS * 2 + 9;
+    while (created < amount) {
+      const position = findWaveSpawnPosition();
+
+      // 화면 위쪽에 더 이상 빈 공간이 없으면 생성 중단
+      if (!position) {
+        console.warn(
+          `공을 배치할 공간이 부족합니다. 요청: ${amount}, 생성: ${created}`
+        );
+
+        break;
+      }
+
+      addBall(
+        position.x,
+        position.y,
+        randomNumber()
+      );
+
+      created++;
+    }
+
+    return created;
+  }
+
+  /**
+   * 새로운 공을 배치할 빈 위치를 찾는다.
+   */
+  function findWaveSpawnPosition() {
+    const minimumDistance =
+      BALL_RADIUS * 2 + 6;
+
     const minimumDistanceSquared =
       minimumDistance * minimumDistance;
 
-    while (created < amount && tries++ < maxTries) {
-      const x =
-        BALL_RADIUS +
-        15 +
-        Math.random() *
-          (W - (BALL_RADIUS + 15) * 2);
-
-      const y = 58 + Math.random() * 190;
-
-      let clear = true;
-
+    /**
+     * 해당 위치에 다른 공이 없는지 확인한다.
+     */
+    function isPositionClear(x, y) {
       for (let i = 0; i < balls.length; i++) {
-        const position = balls[i].body.position;
+        const position =
+          balls[i].body.position;
 
         const dx = position.x - x;
         const dy = position.y - y;
 
         if (
-          dx * dx + dy * dy <=
+          dx * dx + dy * dy <
           minimumDistanceSquared
         ) {
-          clear = false;
-          break;
+          return false;
         }
       }
 
-      if (clear) {
-        addBall(x, y, randomNumber());
-        created++;
+      return true;
+    }
+
+    /*
+    * 1차: 임의 위치 검색
+    *
+    * 기존보다 생성 가능 영역을 아래쪽까지 넓혔다.
+    */
+    for (let attempt = 0; attempt < 1500; attempt++) {
+      const x =
+        BALL_RADIUS + 10 +
+        Math.random() *
+          (
+            W -
+            (BALL_RADIUS + 10) * 2
+          );
+
+      const y =
+        TOP +
+        BALL_RADIUS +
+        15 +
+        Math.random() * 250;
+
+      if (isPositionClear(x, y)) {
+        return { x, y };
       }
     }
 
-    return created;
+    /*
+    * 2차: 격자로 빈자리 검색
+    *
+    * 랜덤 검색에서 빈자리를 놓치는 경우를 방지한다.
+    */
+    const gap = minimumDistance;
+
+    for (
+      let y = TOP + BALL_RADIUS + 15;
+      y <= 330;
+      y += gap
+    ) {
+      for (
+        let x = BALL_RADIUS + 10;
+        x <= W - BALL_RADIUS - 10;
+        x += gap
+      ) {
+        if (isPositionClear(x, y)) {
+          return { x, y };
+        }
+      }
+    }
+
+    // 실제로 공간이 하나도 없는 경우
+    return null;
   }
 
   /**
