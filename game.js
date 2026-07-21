@@ -78,6 +78,24 @@ import {
   const COMBO_SCORE_MULTIPLIER = 1.7;
 
   /*
+  * 숫자 생성 밸런스
+  *
+  * 값이 0이면 완전 랜덤.
+  * 값이 커질수록 필드에 많은 숫자가 덜 등장한다.
+  *
+  * 추천 범위: 0.08 ~ 0.2
+  */
+  const NUMBER_BALANCE_STRENGTH = 0.12;
+
+  /*
+  * 아무리 필드에 많이 쌓여도
+  * 해당 숫자가 나올 최소 확률 가중치.
+  *
+  * 너무 낮으면 지나치게 균형 잡힌 숫자만 나온다.
+  */
+  const MIN_NUMBER_WEIGHT = 0.35;
+
+  /*
    * 검은 구슬 설정
    *
    * BLACK_BALL_INTERVAL:
@@ -161,12 +179,80 @@ import {
   let rankingModalOpened = false;
   let rankingSubmitting = false;
 
-  /* =========================================================
-   * NUMBER / COLOR HELPERS
-   * ======================================================= */
-
+  /**
+   * 필드에 적게 있는 숫자는 조금 더 잘 나오고,
+   * 많이 쌓인 숫자는 조금 덜 나오도록 생성한다.
+   *
+   * 단, 최소 가중치를 유지하므로
+   * 많이 쌓인 숫자도 계속 등장할 수 있다.
+   */
   function randomNumber() {
-    return 1 + Math.floor(Math.random() * 7);
+    const counts = Array(8).fill(0);
+
+    // 검은 구슬과 발사 준비 공은 숫자 분포에서 제외한다.
+    for (let i = 0; i < balls.length; i++) {
+      const ball = balls[i];
+
+      if (
+        ball.isBlack ||
+        ball.number < 1 ||
+        ball.number > 7
+      ) {
+        continue;
+      }
+
+      counts[ball.number]++;
+    }
+
+    const weights = [];
+
+    for (let number = 1; number <= 7; number++) {
+      /*
+      * 공이 많을수록 가중치 감소
+      *
+      * 예:
+      * 0개 → 1.00
+      * 2개 → 0.81
+      * 5개 → 0.63
+      * 10개 → 0.45
+      */
+      const weight = Math.max(
+        MIN_NUMBER_WEIGHT,
+        1 / (
+          1 +
+          counts[number] *
+          NUMBER_BALANCE_STRENGTH
+        )
+      );
+
+      weights.push(weight);
+    }
+
+    return pickWeightedNumber(weights);
+  }
+
+  /**
+   * 전달받은 가중치에 따라 1~7 중 하나를 선택한다.
+   */
+  function pickWeightedNumber(weights) {
+    let totalWeight = 0;
+
+    for (let i = 0; i < weights.length; i++) {
+      totalWeight += weights[i];
+    }
+
+    let random =
+      Math.random() * totalWeight;
+
+    for (let i = 0; i < weights.length; i++) {
+      random -= weights[i];
+
+      if (random <= 0) {
+        return i + 1;
+      }
+    }
+
+    return 7;
   }
 
   function numberColor(number) {
