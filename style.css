@@ -53,9 +53,7 @@ canvas {
   border-radius: 14px;
 }
 
-.stat {
-  padding: 11px 13px;
-}
+.stat { padding: 11px 13px; }
 
 .stat-label,
 .muted,
@@ -100,9 +98,7 @@ canvas {
   font-weight: 800;
 }
 
-.state-badge {
-  background: var(--accent);
-}
+.state-badge { background: var(--accent); }
 
 .meter {
   height: 11px;
@@ -119,9 +115,7 @@ canvas {
   background: var(--accent);
 }
 
-#msg {
-  margin: 9px 0 0;
-}
+#msg { margin: 9px 0 0; }
 
 .canvas-wrap {
   overflow: hidden;
@@ -136,19 +130,14 @@ canvas {
   width: 100%;
   height: auto;
   cursor: crosshair;
-
-  /* 모바일 스크롤, 확대, 브라우저 제스처 차단 */
   touch-action: none;
-
-  /* 드래그 선택 및 끌기 방지 */
   -webkit-user-select: none;
   user-select: none;
   -webkit-touch-callout: none;
   -webkit-user-drag: none;
 }
-canvas.charging {
-  cursor: grabbing;
-}
+
+canvas.charging { cursor: grabbing; }
 
 .power-area {
   flex: 1;
@@ -184,52 +173,75 @@ canvas.charging {
   margin-top: 13px;
 }
 
-.queue-label {
-  margin-left: 7px;
-}
+.queue-label { margin-left: 7px; }
 
 .next-balls {
   display: flex;
   gap: 6px;
 }
 
-.pair-red {
-  background: var(--red);
+.special-ball-badge {
+  cursor: help;
+  outline-offset: 3px;
+  transition: transform 120ms ease, filter 120ms ease;
 }
+
+.special-ball-badge:hover,
+.special-ball-badge:focus-visible {
+  transform: translateY(-2px);
+  filter: brightness(1.15);
+}
+
+.special-ball-info {
+  display: flex;
+  align-items: flex-start;
+  gap: 11px;
+  margin-top: 11px;
+  padding: 11px 12px;
+  border: 1px solid rgba(124, 108, 255, 0.65);
+  border-radius: 12px;
+  background: rgba(124, 108, 255, 0.1);
+}
+
+.special-ball-info[hidden] {
+  display: none;
+}
+
+.special-info-icon {
+  flex: 0 0 auto;
+  font-size: 25px;
+  line-height: 1;
+}
+
+.special-info-text {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.special-info-text strong { font-size: 14px; }
+
+.special-info-text span {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.pair-red { background: var(--red); }
 
 .pair-yellow {
   background: var(--yellow);
   color: #181818;
 }
 
-.pair-green {
-  background: var(--green);
-}
-
-.pair-blue {
-  background: var(--blue);
-}
+.pair-green { background: var(--green); }
+.pair-blue { background: var(--blue); }
 
 .help {
   margin: 13px 0 0;
   font-size: 14px;
   line-height: 1.55;
 }
-
-@media (max-width: 560px) {
-  .app {
-    padding: 10px;
-  }
-
-  .stats {
-    grid-template-columns: repeat(2, 1fr);
-  }
-
-  .title {
-    font-size: 23px;
-  }
-}
-
 
 .section-title {
   margin: 0 0 3px;
@@ -251,9 +263,7 @@ canvas.charging {
   border-bottom: 1px solid var(--border);
 }
 
-.ranking-item:last-child {
-  border-bottom: 0;
-}
+.ranking-item:last-child { border-bottom: 0; }
 
 .ranking-rank,
 .ranking-score {
@@ -272,9 +282,21 @@ canvas.charging {
   font-size: 13px;
 }
 
-.modal[hidden] {
-  display: none;
+.ranking-result {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 3px;
+  white-space: nowrap;
 }
+
+.ranking-combo {
+  color: var(--yellow);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.modal[hidden] { display: none; }
 
 .modal {
   position: fixed;
@@ -300,9 +322,7 @@ canvas.charging {
   background: var(--card);
 }
 
-.modal-dialog h2 {
-  margin: 0;
-}
+.modal-dialog h2 { margin: 0; }
 
 .modal-score {
   margin: 10px 0 18px;
@@ -337,9 +357,7 @@ canvas.charging {
   font-size: 14px;
 }
 
-.modal-message.error {
-  color: #ff7777;
-}
+.modal-message.error { color: #ff7777; }
 
 .modal-actions {
   display: flex;
@@ -359,7 +377,6 @@ canvas.charging {
   opacity: 0.55;
 }
 
-/* 모바일 드래그 중 텍스트 선택 방지 */
 html,
 body,
 .app,
@@ -371,19 +388,12 @@ button {
   -webkit-touch-callout: none;
 }
 
-/* 게임 조작 중 화면 스크롤·당겨서 새로고침 방지 */
 html,
-body {
-  overscroll-behavior: none;
-}
+body { overscroll-behavior: none; }
 
-/* 캔버스와 버튼이 이미지처럼 끌리는 현상 방지 */
 canvas,
-button {
-  -webkit-user-drag: none;
-}
+button { -webkit-user-drag: none; }
 
-/* 닉네임 입력창은 커서 이동·선택·붙여넣기 허용 */
 input,
 textarea,
 .text-input {
@@ -392,20 +402,16 @@ textarea,
   -webkit-touch-callout: default;
 }
 
-.ranking-result {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 3px;
-  white-space: nowrap;
-}
+@media (max-width: 560px) {
+  .app { padding: 10px; }
 
-.ranking-score {
-  font-weight: 800;
-}
+  .stats {
+    grid-template-columns: repeat(2, 1fr);
+  }
 
-.ranking-combo {
-  color: var(--yellow);
-  font-size: 12px;
-  font-weight: 700;
+  .title { font-size: 23px; }
+
+  .special-ball-info {
+    align-items: center;
+  }
 }
