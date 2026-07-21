@@ -1,3 +1,12 @@
+import {
+  getCurrentWeekId,
+  getWeeklyRanking,
+  initializeRanking,
+  isFirebaseConfigured,
+  submitWeeklyScore,
+  getCurrentWeekRange
+} from "./firebase-ranking.js";
+
 (() => {
   "use strict";
 
@@ -23,7 +32,16 @@
     powerBar: document.querySelector("#powerBar"),
     currentBall: document.querySelector("#currentBall"),
     nextBalls: document.querySelector("#nextBalls"),
-    resetButton: document.querySelector("#resetButton")
+    resetButton: document.querySelector("#resetButton"),
+    rankingWeek: document.querySelector("#rankingWeek"),
+    rankingList: document.querySelector("#rankingList"),
+    refreshRankingButton: document.querySelector("#refreshRankingButton"),
+    nicknameModal: document.querySelector("#nicknameModal"),
+    finalScoreText: document.querySelector("#finalScoreText"),
+    nicknameInput: document.querySelector("#nicknameInput"),
+    nicknameMessage: document.querySelector("#nicknameMessage"),
+    submitRankingButton: document.querySelector("#submitRankingButton"),
+    skipRankingButton: document.querySelector("#skipRankingButton")
   };
 
   /* =========================================================
@@ -54,13 +72,26 @@
   const BLAST_FORCE = 16;
 
   /*
+   * 검은 구슬 설정
+   *
+   * BLACK_BALL_INTERVAL:
+   *   몇 턴마다 검은 구슬을 한 개 추가할지 설정한다.
+   *
+   * BLACK_BALL_OVERLOAD:
+   *   검은 구슬 한 개가 차지하는 과부하 수치다.
+   */
+  const BLACK_BALL_INTERVAL = 25;
+  const BLACK_BALL_OVERLOAD = 5;
+  const BLACK_BALL_COLOR = "#111111";
+
+  /*
    * 기본 마찰(frictionAir)은 그대로 유지한다.
    * 공의 속도가 LOW_SPEED_THRESHOLD보다 느려지면
    * LOW_SPEED_DAMPING을 매 프레임 적용하여 빠르게 정지시킨다.
    */
   const NORMAL_AIR_FRICTION = 0.018;
   const LOW_SPEED_THRESHOLD = 1.35;
-  const LOW_SPEED_DAMPING = 0.84;
+  const LOW_SPEED_DAMPING = 0.76;
   const SNAP_STOP_SPEED = 0.08;
 
   // 턴 종료를 판단하기 위한 설정
@@ -120,6 +151,10 @@
   let chargeDirection = 1;
   let activePointerId = null;
 
+  // 한 게임 결과에 대해 닉네임 창을 한 번만 연다.
+  let rankingModalOpened = false;
+  let rankingSubmitting = false;
+
   /* =========================================================
    * NUMBER / COLOR HELPERS
    * ======================================================= */
@@ -166,7 +201,11 @@
     let total = 0;
 
     for (let i = 0; i < balls.length; i++) {
-      total += balls[i].number;
+      const ball = balls[i];
+
+      total += ball.isBlack
+        ? BLACK_BALL_OVERLOAD
+        : ball.number;
     }
 
     return total;
@@ -247,7 +286,8 @@
     number,
     velocityX = 0,
     velocityY = 0,
-    isShot = false
+    isShot = false,
+    isBlack = false
   ) {
     const body = Bodies.circle(x, y, BALL_RADIUS, {
       restitution: 0.96,
@@ -266,7 +306,8 @@
     const ball = {
       body,
       number,
-      isShot
+      isShot,
+      isBlack
     };
 
     balls.push(ball);
@@ -356,6 +397,63 @@
     return created;
   }
 
+  /**
+   * 필드의 빈 위치를 찾아 검은 구슬을 한 개 추가한다.
+   *
+   * 검은 구슬은 숫자가 없으며 폭발하지 않는다.
+   * 물리 충돌과 폭발 충격에는 일반 공처럼 반응한다.
+   */
+  function addBlackBall() {
+    let tries = 0;
+
+    const maxTries = 1000;
+    const minimumDistance = BALL_RADIUS * 2 + 9;
+    const minimumDistanceSquared =
+      minimumDistance * minimumDistance;
+
+    while (tries++ < maxTries) {
+      const x =
+        BALL_RADIUS +
+        15 +
+        Math.random() *
+          (W - (BALL_RADIUS + 15) * 2);
+
+      const y = 58 + Math.random() * 190;
+
+      let clear = true;
+
+      for (let i = 0; i < balls.length; i++) {
+        const position = balls[i].body.position;
+        const dx = position.x - x;
+        const dy = position.y - y;
+
+        if (
+          dx * dx + dy * dy <=
+          minimumDistanceSquared
+        ) {
+          clear = false;
+          break;
+        }
+      }
+
+      if (clear) {
+        addBall(
+          x,
+          y,
+          0,
+          0,
+          0,
+          false,
+          true
+        );
+
+        return true;
+      }
+    }
+
+    return false;
+  }
+
   /* =========================================================
    * RESET
    * ======================================================= */
@@ -405,7 +503,10 @@
     chargePower = MIN_POWER;
     chargeDirection = 1;
     activePointerId = null;
+    rankingModalOpened = false;
+    rankingSubmitting = false;
 
+    closeNicknameModal();
     canvas.classList.remove("charging");
 
     createWalls();
@@ -637,6 +738,8 @@
           if (
             !first ||
             !second ||
+            first.isBlack ||
+            second.isBlack ||
             first.number + second.number !== 8
           ) {
             continue;
@@ -920,6 +1023,149 @@
   }
 
   /* =========================================================
+   * FIREBASE WEEKLY RANKING
+   * ======================================================= */
+
+  function openNicknameModal() {
+    if (rankingModalOpened) {
+      return;
+    }
+
+    rankingModalOpened = true;
+    ui.finalScoreText.textContent = `${score.toLocaleString()}점`;
+    ui.nicknameMessage.textContent = "";
+    ui.nicknameMessage.classList.remove("error");
+
+    const savedNickname = localStorage.getItem("burst8Nickname") || "";
+    ui.nicknameInput.value = savedNickname;
+    ui.nicknameModal.hidden = false;
+
+    requestAnimationFrame(() => {
+      ui.nicknameInput.focus();
+      ui.nicknameInput.select();
+    });
+  }
+
+  function closeNicknameModal() {
+    ui.nicknameModal.hidden = true;
+    ui.nicknameMessage.textContent = "";
+    ui.nicknameMessage.classList.remove("error");
+  }
+
+  async function submitGameResult() {
+    if (rankingSubmitting) {
+      return;
+    }
+
+    const nickname = ui.nicknameInput.value.trim();
+
+    if (!nickname) {
+      ui.nicknameMessage.textContent = "닉네임을 입력해 주세요.";
+      ui.nicknameMessage.classList.add("error");
+      ui.nicknameInput.focus();
+      return;
+    }
+
+    if (!isFirebaseConfigured()) {
+      ui.nicknameMessage.textContent =
+        "firebase-config.js에 Firebase 설정값을 먼저 입력해 주세요.";
+      ui.nicknameMessage.classList.add("error");
+      return;
+    }
+
+    rankingSubmitting = true;
+    ui.submitRankingButton.disabled = true;
+    ui.skipRankingButton.disabled = true;
+    ui.nicknameMessage.textContent = "랭킹을 등록하는 중입니다...";
+    ui.nicknameMessage.classList.remove("error");
+
+    try {
+      const result = await submitWeeklyScore({
+        nickname,
+        score,
+        bestCombo,
+        turn
+      });
+
+      localStorage.setItem("burst8Nickname", nickname);
+
+      ui.nicknameMessage.textContent = result.updated
+        ? "이번 주 최고 점수가 등록되었습니다."
+        : `기존 최고 점수 ${result.previousScore.toLocaleString()}점이 더 높습니다.`;
+
+      await renderWeeklyRanking();
+
+      window.setTimeout(() => {
+        closeNicknameModal();
+      }, 900);
+    } catch (error) {
+      console.error("랭킹 등록 실패:", error);
+
+      ui.nicknameMessage.textContent =
+        error?.message === "NICKNAME_REQUIRED"
+          ? "닉네임을 입력해 주세요."
+          : "랭킹 등록에 실패했습니다. Firebase 설정과 보안 규칙을 확인해 주세요.";
+
+      ui.nicknameMessage.classList.add("error");
+    } finally {
+      rankingSubmitting = false;
+      ui.submitRankingButton.disabled = false;
+      ui.skipRankingButton.disabled = false;
+    }
+  }
+
+  async function renderWeeklyRanking() {
+    ui.rankingWeek.textContent = getCurrentWeekRange();
+
+    if (!isFirebaseConfigured()) {
+      ui.rankingList.innerHTML =
+        '<li class="ranking-empty">firebase-config.js에 프로젝트 설정값을 입력해 주세요.</li>';
+      return;
+    }
+
+    ui.rankingList.innerHTML =
+      '<li class="ranking-empty">랭킹을 불러오는 중입니다...</li>';
+
+    try {
+      const result = await getWeeklyRanking(20);
+      ui.rankingWeek.textContent = result.weekId;
+
+      if (result.rankings.length === 0) {
+        ui.rankingList.innerHTML =
+          '<li class="ranking-empty">이번 주에 등록된 점수가 없습니다.</li>';
+        return;
+      }
+
+      ui.rankingList.replaceChildren(
+        ...result.rankings.map(item => {
+          const row = document.createElement("li");
+          row.className = "ranking-item";
+
+          const rank = document.createElement("span");
+          rank.className = "ranking-rank";
+          rank.textContent = `${item.rank}위`;
+
+          const player = document.createElement("span");
+          player.className = "ranking-name";
+          player.textContent = item.nickname;
+
+          const resultBox = document.createElement("span");
+          resultBox.className = "ranking-score";
+          resultBox.textContent = `${item.score.toLocaleString()}점`;
+          resultBox.title = `최고 콤보 ${item.bestCombo} · ${item.turn}턴`;
+
+          row.append(rank, player, resultBox);
+          return row;
+        })
+      );
+    } catch (error) {
+      console.error("랭킹 조회 실패:", error);
+      ui.rankingList.innerHTML =
+        '<li class="ranking-empty">랭킹을 불러오지 못했습니다.</li>';
+    }
+  }
+
+  /* =========================================================
    * TURN END
    * ======================================================= */
 
@@ -955,6 +1201,8 @@
           `게임 오버 · ${score.toLocaleString()}점`,
           "GAME OVER"
         );
+
+        openNicknameModal();
       } else {
         overload = false;
 
@@ -964,18 +1212,42 @@
         );
       }
     } else {
+      let statusMessage =
+        "다음 발사를 준비하세요.";
+
+      let statusBadge = "READY";
+
       if (turn % 2 === 0) {
         const added = addWave();
 
-        setStatus(
-          `새 숫자 공 ${added}개가 추가되었습니다.`,
-          "WAVE"
-        );
-      } else {
-        setStatus(
-          "다음 발사를 준비하세요."
-        );
+        statusMessage =
+          `새 숫자 공 ${added}개가 추가되었습니다.`;
+
+        statusBadge = "WAVE";
       }
+
+      /*
+       * 설정된 턴마다 검은 구슬을 한 개 추가한다.
+       * 예: BLACK_BALL_INTERVAL이 25라면
+       * 25, 50, 75턴 종료 시 생성된다.
+       */
+      if (
+        BLACK_BALL_INTERVAL > 0 &&
+        turn % BLACK_BALL_INTERVAL === 0
+      ) {
+        const blackBallAdded =
+          addBlackBall();
+
+        if (blackBallAdded) {
+          statusMessage +=
+            ` 검은 구슬이 추가되었습니다.`;
+        }
+      }
+
+      setStatus(
+        statusMessage,
+        statusBadge
+      );
 
       if (
         fieldLoad() >=
@@ -1641,8 +1913,9 @@
     const position =
       ball.body.position;
 
-    const color =
-      numberColor(ball.number);
+    const color = ball.isBlack
+      ? BLACK_BALL_COLOR
+      : numberColor(ball.number);
 
     ctx.beginPath();
 
@@ -1682,22 +1955,25 @@
 
     ctx.fill();
 
-    ctx.fillStyle =
-      numberTextColor(
-        ball.number
+    // 검은 구슬에는 숫자를 표시하지 않는다.
+    if (!ball.isBlack) {
+      ctx.fillStyle =
+        numberTextColor(
+          ball.number
+        );
+
+      ctx.font =
+        "900 22px system-ui";
+
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+
+      ctx.fillText(
+        ball.number,
+        position.x,
+        position.y + 0.5
       );
-
-    ctx.font =
-      "900 22px system-ui";
-
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-
-    ctx.fillText(
-      ball.number,
-      position.x,
-      position.y + 0.5
-    );
+    }
   }
 
   function drawReadyBall() {
@@ -2025,11 +2301,42 @@
     resetGame
   );
 
+  ui.refreshRankingButton.addEventListener(
+    "click",
+    renderWeeklyRanking
+  );
+
+  ui.submitRankingButton.addEventListener(
+    "click",
+    submitGameResult
+  );
+
+  ui.skipRankingButton.addEventListener(
+    "click",
+    closeNicknameModal
+  );
+
+  ui.nicknameInput.addEventListener(
+    "keydown",
+    event => {
+      if (event.key === "Enter") {
+        submitGameResult();
+      }
+    }
+  );
+
   /* =========================================================
    * START
    * ======================================================= */
 
   resetGame();
+  renderWeeklyRanking();
+
+  if (isFirebaseConfigured()) {
+    initializeRanking().catch(error => {
+      console.error("Firebase 익명 로그인 실패:", error);
+    });
+  }
 
   requestAnimationFrame(
     gameLoop

@@ -61,9 +61,48 @@
         놓는 순간 현재 힘으로 발사됩니다. 공이 충분히 느려지면 빠르게 감속한 뒤 정지합니다.
       </p>
     </section>
+
+    <section class="card ranking-card">
+      <div class="row">
+        <div>
+          <h2 class="section-title">이번 주 랭킹</h2>
+          <span id="rankingWeek" class="muted"></span>
+        </div>
+        <button id="refreshRankingButton" class="button" type="button">새로고침</button>
+      </div>
+
+      <ol id="rankingList" class="ranking-list">
+        <li class="ranking-empty">Firebase 설정 후 랭킹을 불러옵니다.</li>
+      </ol>
+    </section>
+
+    <div id="nicknameModal" class="modal" hidden>
+      <div class="modal-backdrop"></div>
+      <section class="modal-dialog" role="dialog" aria-modal="true" aria-labelledby="nicknameModalTitle">
+        <h2 id="nicknameModalTitle">주간 랭킹 등록</h2>
+        <p class="modal-score">최종 점수 <strong id="finalScoreText">0점</strong></p>
+
+        <label class="input-label" for="nicknameInput">닉네임</label>
+        <input
+          id="nicknameInput"
+          class="text-input"
+          type="text"
+          maxlength="12"
+          autocomplete="nickname"
+          placeholder="1~12자 닉네임"
+        />
+
+        <p id="nicknameMessage" class="modal-message" aria-live="polite"></p>
+
+        <div class="modal-actions">
+          <button id="skipRankingButton" class="button" type="button">건너뛰기</button>
+          <button id="submitRankingButton" class="button primary-button" type="button">랭킹 등록</button>
+        </div>
+      </section>
+    </div>
   </main>
 
   <script src="https://cdn.jsdelivr.net/npm/matter-js@0.20.0/build/matter.min.js"></script>
-  <script src="./game.js"></script>
+  <script type="module" src="./game.js"></script>
 </body>
 </html>
