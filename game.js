@@ -2218,19 +2218,55 @@ import {
         W + OUTSIDE_DELETE_MARGIN;
 
     /*
-     * 제한 시간 안에 들어오지 못했거나 화면 밖으로 멀리 나가면 삭제한다.
+     * 제한 시간 안에 들어오지 못했거나 화면 밖으로 멀리 나가면
+     * 삭제하지 않고 필드 아래쪽 안전 위치로 되돌린다.
      */
     if (
       elapsed >= OUTSIDE_SHOT_TIMEOUT_MS ||
       outsideTooFar
     ) {
-      removeBall(activeShotBall);
+      const returnedBall =
+        activeShotBall;
+
+      const safeX = Math.min(
+        W - BALL_RADIUS - 4,
+        Math.max(
+          BALL_RADIUS + 4,
+          position.x
+        )
+      );
+
+      Body.setPosition(
+        returnedBall.body,
+        {
+          x: safeX,
+          y:
+            FLOOR -
+            BALL_RADIUS -
+            8
+        }
+      );
+
+      Body.setVelocity(
+        returnedBall.body,
+        {
+          x: 0,
+          y: 0
+        }
+      );
+
+      Body.setAngularVelocity(
+        returnedBall.body,
+        0
+      );
+
+      returnedBall.hasEnteredField = true;
       activeShotBall = null;
       closeLaunchGate();
 
       setStatus(
-        "공이 맵 안으로 들어오지 못해 사라졌습니다.",
-        "MISS"
+        "필드 밖으로 나간 공을 안쪽으로 되돌렸습니다.",
+        "RETURN"
       );
 
       finishTurn();
@@ -2878,11 +2914,19 @@ import {
    * 화면에 그려지는 현재 발사 준비 공과 다음 대기열은 물리 공이 아니므로
    * 이 함수의 영향을 받지 않는다.
    */
-  function removeBallsInLaunchArea() {
+  /**
+   * 필드 밖으로 밀려난 일반 공과 검은 구슬을
+   * 삭제하지 않고 필드 안쪽으로 되돌린다.
+   *
+   * 발사 후 남은 특수공은 기존 규칙대로 제거한다.
+   */
+  function returnBallsInLaunchAreaToField() {
     const launchAreaBalls =
       balls.filter(ball =>
         ball.body.position.y >= FLOOR
       );
+
+    let returnedCount = 0;
 
     for (
       let i = 0;
@@ -2893,15 +2937,53 @@ import {
         launchAreaBalls[i];
 
       if (
-        ballByBodyId.has(
+        !ballByBodyId.has(
           ball.body.id
-        )
+        ) ||
+        ball.specialType
       ) {
-        removeBall(ball);
+        continue;
       }
+
+      const safeX = Math.min(
+        W - BALL_RADIUS - 4,
+        Math.max(
+          BALL_RADIUS + 4,
+          ball.body.position.x
+        )
+      );
+
+      Body.setPosition(
+        ball.body,
+        {
+          x: safeX,
+          y:
+            FLOOR -
+            BALL_RADIUS -
+            8
+        }
+      );
+
+      Body.setVelocity(
+        ball.body,
+        {
+          x: 0,
+          y: 0
+        }
+      );
+
+      Body.setAngularVelocity(
+        ball.body,
+        0
+      );
+
+      ball.hasEnteredField = true;
+      ball.isShot = false;
+
+      returnedCount++;
     }
 
-    return launchAreaBalls.length;
+    return returnedCount;
   }
 
   function finishTurn() {
@@ -2909,15 +2991,17 @@ import {
     closeLaunchGate();
 
     /*
-     * 턴 종료 시 발사 구역에 남은 일반 공, 검은 공,
-     * 발사 공, 특수공을 모두 제거한다.
+     * 턴 종료 시 발사 구역으로 밀려난 일반 공과 검은 구슬은
+     * 삭제하지 않고 필드 안쪽으로 되돌린다.
+     *
+     * 특히 검은 구슬도 반드시 유지된다.
      */
-    const removedLaunchAreaCount =
-      removeBallsInLaunchArea();
+    const returnedLaunchAreaCount =
+      returnBallsInLaunchAreaToField();
 
-    if (removedLaunchAreaCount > 0) {
+    if (returnedLaunchAreaCount > 0) {
       console.debug(
-        `발사 구역 공 ${removedLaunchAreaCount}개 제거`
+        `필드 밖 공 ${returnedLaunchAreaCount}개 복귀`
       );
     }
 
