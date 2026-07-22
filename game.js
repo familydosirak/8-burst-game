@@ -3202,10 +3202,40 @@ import {
       } else {
         overload = false;
 
+        const added = addWave();
+
+        let statusMessage =
+          `과부하 해소 성공! 새 숫자 공 ${added}개가 추가되었습니다.`;
+
+        if (
+          BLACK_BALL_INTERVAL > 0 &&
+          turn % BLACK_BALL_INTERVAL === 0
+        ) {
+          const blackBallAdded =
+            addBlackBall();
+
+          if (blackBallAdded) {
+            statusMessage +=
+              " 검은 구슬이 추가되었습니다.";
+          }
+        }
+
         setStatus(
-          "과부하 해소 성공!",
+          statusMessage,
           "SAVED"
         );
+
+        if (
+          fieldBallCount() >=
+          BALL_COUNT_LIMIT
+        ) {
+          overload = true;
+
+          setStatus(
+            "OVERLOAD! 다음 한 발로 85 아래로 낮추세요.",
+            "OVERLOAD"
+          );
+        }
       }
     } else {
       let statusMessage =
