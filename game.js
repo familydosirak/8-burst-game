@@ -103,7 +103,7 @@ import {
   const BASE_COMBO_SCORE = 8;
 
   // 콤보마다 적용되는 점수 배율
-  const COMBO_SCORE_MULTIPLIER = 1.5;
+  const COMBO_SCORE_MULTIPLIER = 1.35;
 
   /*
   * 숫자 생성 밸런스
@@ -144,7 +144,7 @@ import {
 
   // 블랙홀 흡입 및 폭발 설정
   const BLACK_HOLE_SUCTION_RADIUS = 120;
-  const BLACK_HOLE_BASE_BLAST_RADIUS = 115;
+  const BLACK_HOLE_BASE_BLAST_RADIUS = 125;
   const BLACK_HOLE_RADIUS_PER_BALL = 10;
   const BLACK_HOLE_FORCE_PER_BALL = 1.5;
 
@@ -152,7 +152,7 @@ import {
    * 특수공 연출 시간
    */
   const BLACK_HOLE_EFFECT_DURATION = 0.82;
-  const RAINBOW_EFFECT_DURATION = 0.42;
+  const RAINBOW_EFFECT_DURATION = 0.62;
 
   /*
    * 저속 상태에서 공끼리 겹치거나 붙는 현상 방지 설정
@@ -176,7 +176,7 @@ import {
    *   몇 턴마다 검은 구슬을 한 개 추가할지 설정한다.
    *
    */
-  const BLACK_BALL_INTERVAL = 5;
+  const BLACK_BALL_INTERVAL = 8;
   const BLACK_BALL_COLOR = "#111111";
 
   /*
@@ -428,13 +428,13 @@ import {
   function specialBallDescription(type) {
     const descriptions = {
       rainbow:
-        "처음 닿은 일반 숫자 공과 같은 숫자의 공을 맵에서 모두 제거합니다. 폭발과 물리 충격은 발생하지 않습니다.",
+        "처음 닿은 일반 숫자 공과 같은 색의 공을 맵에서 모두 제거합니다. 예를 들어 1에 닿으면 같은 빨간색인 1과 7이 모두 사라집니다. 폭발과 물리 충격은 발생하지 않습니다.",
 
       ice:
         "공에 닿는 즉시 폭발하고, 이번 턴 동안 맵 전체가 얼어 공이 더 오래 미끄러집니다.",
 
       cloud:
-        "공을 관통하면서 닿은 일반 숫자 공을 모두 4로 바꿉니다. 벽에 한 번 튕긴 뒤 다음 벽에서 사라집니다.",
+        "공을 관통하면서 닿은 일반 숫자 공을 모두 4로 바꿉니다. 벽에 한 번 튕긴 뒤 마지막에 사라질 때 폭발합니다.",
 
       blackHole:
         "충돌 지점 반경의 일반 숫자 공을 먹습니다. 먹은 공은 모두 콤보가 되고, 먹은 개수에 비례해 폭발 범위와 힘이 커집니다."
@@ -450,7 +450,7 @@ import {
   function specialBallLaunchDescription(type) {
     const descriptions = {
       rainbow: [
-        "같은 숫자의 공을",
+        "같은 색의 공을",
         "필드에서 모두 제거"
       ],
 
@@ -460,8 +460,8 @@ import {
       ],
 
       cloud: [
-        "닿은 숫자 공을 4로 변경",
-        "벽 1회 반사 후 사라짐"
+        "닿은 숫자 공을 모두 4로",
+        "마지막에 사라지며 폭발"
       ],
 
       blackHole: [
@@ -1697,12 +1697,21 @@ import {
     const targetNumber =
       targetBall.number;
 
+    const targetColor =
+      numberColor(targetNumber);
+
+    /*
+     * 무지개공은 같은 숫자가 아니라 같은 색상 그룹을 제거한다.
+     * 빨강: 1, 7 / 노랑: 2, 6 / 초록: 3, 5 / 파랑: 4
+     */
     const targets =
       balls.filter(ball =>
         !ball.isBlack &&
         !ball.specialType &&
         !ball.effectLocked &&
-        ball.number === targetNumber
+        ball.number >= 1 &&
+        ball.number <= 7 &&
+        numberColor(ball.number) === targetColor
       );
 
     const effectTargets = [];
@@ -1744,7 +1753,7 @@ import {
     });
 
     setStatus(
-      `${targetNumber}번 공이 무지개빛으로 사라집니다.`,
+      `${targetNumber}번과 같은 색의 공이 무지개빛으로 사라집니다.`,
       "RAINBOW"
     );
   }
@@ -1796,6 +1805,85 @@ import {
     targetBall.number = 4;
   }
 
+  /**
+   * 구름공이 수명을 다했을 때 마지막 위치에서 폭발한다.
+   * 점수나 콤보는 추가하지 않고 주변 공에 물리 충격만 준다.
+   */
+  function detonateCloudBall(cloudBall) {
+    if (
+      !cloudBall ||
+      !ballByBodyId.has(cloudBall.body.id)
+    ) {
+      return;
+    }
+
+    const x = Math.min(
+      W - BALL_RADIUS - 2,
+      Math.max(BALL_RADIUS + 2, cloudBall.body.position.x)
+    );
+
+    const y = Math.min(
+      FLOOR - BALL_RADIUS - 2,
+      Math.max(TOP + BALL_RADIUS + 2, cloudBall.body.position.y)
+    );
+
+    removeSpecialShot(cloudBall);
+
+    flash = Math.max(flash, 0.3);
+    shake = Math.max(shake, 8);
+
+    if (rings.length < MAX_RINGS) {
+      rings.push({
+        x,
+        y,
+        radius: 12,
+        life: 0.72,
+        color: COLORS.cloud,
+        speed: 175
+      });
+    }
+
+    const available =
+      MAX_PARTICLES - particles.length;
+
+    const particleCount =
+      Math.min(available, 22);
+
+    for (let i = 0; i < particleCount; i++) {
+      const angle =
+        Math.random() * Math.PI * 2;
+
+      const speed =
+        75 + Math.random() * 135;
+
+      particles.push({
+        x,
+        y,
+        vx: Math.cos(angle) * speed,
+        vy: Math.sin(angle) * speed,
+        size: 2.2 + Math.random() * 3.2,
+        life: 0.45 + Math.random() * 0.28,
+        color:
+          Math.random() < 0.3
+            ? "#ffffff"
+            : COLORS.cloud
+      });
+    }
+
+    applyBlast(
+      x,
+      y,
+      [],
+      BLAST_RADIUS * 1.05,
+      BLAST_FORCE * 0.9
+    );
+
+    setStatus(
+      "구름공이 사라지며 폭발했습니다.",
+      "CLOUD BURST"
+    );
+  }
+
   function handleCloudCollision(specialBall, otherBall, otherBody) {
     if (otherBall) {
       if (specialBall.touchedBodyIds.has(otherBall.body.id)) {
@@ -1812,7 +1900,7 @@ import {
     }
 
     if (specialBall.wallBounces >= CLOUD_MAX_WALL_BOUNCES) {
-      removeSpecialShot(specialBall);
+      detonateCloudBall(specialBall);
       return;
     }
 
@@ -3043,7 +3131,14 @@ import {
       balls.filter(ball => Boolean(ball.specialType));
 
     for (let i = 0; i < stoppedSpecialBalls.length; i++) {
-      removeSpecialShot(stoppedSpecialBalls[i]);
+      const specialBall =
+        stoppedSpecialBalls[i];
+
+      if (specialBall.specialType === "cloud") {
+        detonateCloudBall(specialBall);
+      } else {
+        removeSpecialShot(specialBall);
+      }
     }
 
     for (let i = 0; i < balls.length; i++) {
@@ -4725,14 +4820,6 @@ import {
 
         ctx.font =
           "800 9px system-ui";
-
-        ctx.fillText(
-          "1",
-          x,
-          y +
-            LAUNCH_QUEUE_RADIUS +
-            11
-        );
       }
     }
 
@@ -4903,11 +4990,7 @@ import {
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
 
-    ctx.fillText(
-      "발사 구역",
-      58,
-      H - 14
-    );
+    
 
     ctx.strokeStyle =
       "rgba(255,255,255,.28)";
@@ -5083,7 +5166,34 @@ import {
             MAX_SHOT_DURATION_MS
         )
       ) {
-        finishTurn();
+        /*
+         * 구름공이 두 번째 벽에 닿지 않고 바닥이나 공 사이에서
+         * 멈춘 경우에도 턴을 바로 끝내지 않는다.
+         * 먼저 구름공을 폭발시킨 뒤 폭발로 밀려난 공의 움직임을
+         * 다시 물리 엔진에서 처리한다.
+         */
+        const stoppedCloudBalls =
+          balls.filter(
+            ball =>
+              ball.specialType === "cloud"
+          );
+
+        if (stoppedCloudBalls.length > 0) {
+          for (
+            let i = 0;
+            i < stoppedCloudBalls.length;
+            i++
+          ) {
+            detonateCloudBall(
+              stoppedCloudBalls[i]
+            );
+          }
+
+          quietFrames = 0;
+          shotStartedAt = now;
+        } else {
+          finishTurn();
+        }
       }
     }
 
