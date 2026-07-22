@@ -117,7 +117,7 @@ import {
   const BASE_COMBO_SCORE = 8;
 
   // 콤보마다 적용되는 점수 배율
-  const COMBO_SCORE_MULTIPLIER = 1.26;
+  const COMBO_SCORE_MULTIPLIER = 1.25;
 
   /*
   * 숫자 생성 밸런스
@@ -158,8 +158,8 @@ import {
 
   // 블랙홀 흡입 및 폭발 설정
   const BLACK_HOLE_SUCTION_RADIUS = 100;
-  const BLACK_HOLE_BASE_BLAST_RADIUS = 100;
-  const BLACK_HOLE_RADIUS_PER_BALL = 6;
+  const BLACK_HOLE_BASE_BLAST_RADIUS = 110;
+  const BLACK_HOLE_RADIUS_PER_BALL = 7;
   const BLACK_HOLE_FORCE_PER_BALL = 2.5;
 
   /*
@@ -184,15 +184,15 @@ import {
   const CLOUD_MAX_WALL_BOUNCES = 2;
 
   // 구름공이 직접 닿지 않아도 주변 공을 4로 바꾸는 판정 반경
-  const CLOUD_CONVERT_RADIUS = BALL_RADIUS * 3.8;
+  const CLOUD_CONVERT_RADIUS = BALL_RADIUS * 4.7;
 
   // 효과음 설정
   // 슬라이더 100%일 때의 최대 효과음 크기
-  const EXPLOSION_SOUND_MAX_VOLUME = 0.36;
-  const EXPLOSION_PITCH_PER_COMBO = 0.055;
+  const EXPLOSION_SOUND_MAX_VOLUME = 0.8;
+  const EXPLOSION_PITCH_PER_COMBO = 0.065;
 
   // 기존보다 최대 피치를 조금 더 높인다.
-  const EXPLOSION_MAX_PITCH_MULTIPLIER = 4;
+  const EXPLOSION_MAX_PITCH_MULTIPLIER = 5;
 
   const SOUND_VOLUME_STORAGE_KEY =
     "burst8SoundVolume";
