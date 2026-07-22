@@ -3052,8 +3052,10 @@ import {
   function returnBallsInLaunchAreaToField() {
     const launchAreaBalls =
       balls.filter(ball =>
-        ball.body.position.y >= FLOOR
-      );
+        ball.body.position.y +
+          BALL_RADIUS >=
+        FLOOR - 2
+    );
 
     let returnedCount = 0;
 
@@ -3089,7 +3091,7 @@ import {
           y:
             FLOOR -
             BALL_RADIUS -
-            8
+            12
         }
       );
 
