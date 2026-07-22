@@ -28,6 +28,19 @@ button, canvas { -webkit-tap-highlight-color: transparent; }
 .row { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 .badge { display: inline-flex; min-width: 30px; height: 30px; padding: 0 10px; align-items: center; justify-content: center; border-radius: 999px; font-weight: 800; }
 .state-badge { background: var(--accent); }
+
+.ball-count-info {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.next-wave-text {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+}
 .meter { height: 11px; overflow: hidden; border-radius: 999px; background: #283141; margin-top: 9px; }
 .meter-fill { width: 0; height: 100%; border-radius: inherit; background: var(--accent); }
 #msg { margin: 9px 0 0; }
@@ -96,4 +109,10 @@ input, textarea, .text-input { -webkit-user-select: text; user-select: text; -we
   .control-row { align-items: stretch; }
   .power-area { min-width: 100%; }
   .volume-control { width: 100%; flex-basis: 100%; }
+
+  .ball-count-info {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 3px;
+  }
 }
