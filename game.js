@@ -25,6 +25,7 @@ import {
     best: document.querySelector("#best"),
     turn: document.querySelector("#turn"),
     load: document.querySelector("#load"),
+    nextWaveText: document.querySelector("#nextWaveText"),
     loadBar: document.querySelector("#loadBar"),
     state: document.querySelector("#state"),
     msg: document.querySelector("#msg"),
@@ -58,7 +59,7 @@ import {
 
   const BALL_RADIUS = 11;
 
-  // 화면에 공이 이 개수 이상이면 과부하 상태가 된다. 작은 공 기준 130개.
+  // 화면에 공이 이 개수 이상이면 과부하 상태가 된다. 작은 공 기준 135개.
   const BALL_COUNT_LIMIT = 135;
   
   const SHOOT_X = W / 2;
@@ -143,7 +144,7 @@ import {
    * SPECIAL_BALL_CHANCE는 다음 공이 특수공일 전체 확률이다.
    * 0.12는 약 12% 확률을 의미한다.
    */
-  const SPECIAL_BALL_CHANCE = 0.18;
+  const SPECIAL_BALL_CHANCE = 0.23;
 
   const SPECIAL_BALL_TYPES = [
     "rainbow",
@@ -494,22 +495,22 @@ import {
     const descriptions = {
       rainbow: [
         "같은 색의 공을",
-        "필드에서 모두 제거합니다."
+        "필드에서 모두 제거"
       ],
 
       ice: [
         "충돌 즉시 폭발하고",
-        "공이 더 잘 미끄러집니다."
+        "이번 턴 더 오래 미끄러짐"
       ],
 
       cloud: [
-        "닿은 숫자 공을 모두 4로 바꾸고",
-        "폭발합니다."
+        "닿은 숫자 공을 모두 4로",
+        "마지막에 사라지며 폭발"
       ],
 
       blackHole: [
-        "주변 공을 흡수한 만큼",
-        "강하게 폭발합니다."
+        "주변 숫자 공을 흡수",
+        "먹은 수만큼 강한 폭발"
       ]
     };
 
@@ -650,6 +651,27 @@ import {
 
   ui.load.textContent =
     ballCount;
+
+  /*
+   * 대기 중에는 다음 발사 후 추가될 공의 개수를 표시한다.
+   * 움직이는 중에는 이미 turn++가 적용되었으므로 현재 턴 값을 사용한다.
+   */
+  const nextWaveTurn =
+    moving
+      ? turn
+      : turn + 1;
+
+  const nextWaveAmount =
+    waveAmountForTurn(
+      nextWaveTurn
+    );
+
+  if (ui.nextWaveText) {
+    ui.nextWaveText.textContent =
+      gameOver
+        ? "게임이 종료되었습니다."
+        : `다음 턴에 ${nextWaveAmount}개의 공이 추가됩니다.`;
+  }
 
   ui.loadBar.style.width =
     `${Math.min(
@@ -3459,7 +3481,7 @@ import {
           overload = true;
 
           setStatus(
-            "OVERLOAD! 다음 한 발로 170 아래로 낮추세요.",
+            "OVERLOAD! 다음 한 발로 135 아래로 낮추세요.",
             "OVERLOAD"
           );
         }
