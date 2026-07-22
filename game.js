@@ -167,7 +167,7 @@ import {
   const SHOT_EXPLOSION_RECOIL = 9;
 
   // 구름공은 공을 관통하고 벽에서 한 번만 반사된다.
-  const CLOUD_MAX_WALL_BOUNCES = 1;
+  const CLOUD_MAX_WALL_BOUNCES = 2;
 
   /*
    * 검은 구슬 설정
@@ -176,7 +176,7 @@ import {
    *   몇 턴마다 검은 구슬을 한 개 추가할지 설정한다.
    *
    */
-  const BLACK_BALL_INTERVAL = 8;
+  const BLACK_BALL_INTERVAL = 10;
   const BLACK_BALL_COLOR = "#111111";
 
   /*
@@ -835,11 +835,6 @@ import {
   function waveAmountForTurn(currentTurn) {
     /*
      * 매 라운드 공을 추가한다.
-     *
-     * 1~5라운드: 4개
-     * 6~11라운드: 5개
-     * 12~17라운드: 6개
-     * 이후 6라운드마다 1개씩 증가
      */
     return 8 + Math.floor(currentTurn / 6);
   }
