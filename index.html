@@ -2,12 +2,9 @@
 <html lang="ko">
 <head>
   <meta charset="UTF-8" />
-  <meta
-    name="viewport"
-    content="width=device-width, initial-scale=1.0"
-  />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>8 Burst</title>
-  <link rel="stylesheet" href="./style.css?v=17" />
+  <link rel="stylesheet" href="./style.css?v=18" />
 </head>
 <body>
   <main class="app">
@@ -34,7 +31,7 @@
     </div>
 
     <section class="card">
-      <div class="row">
+      <div class="row control-row">
         <div class="power-area">
           <div class="power-label">
             <span>발사 힘</span>
@@ -42,6 +39,24 @@
           </div>
           <div class="meter"><div id="powerBar" class="meter-fill"></div></div>
         </div>
+
+        <div class="volume-control">
+          <div class="volume-label">
+            <label for="volumeSlider">효과음</label>
+            <strong id="volumeText">50%</strong>
+          </div>
+          <input
+            id="volumeSlider"
+            class="volume-slider"
+            type="range"
+            min="0"
+            max="100"
+            step="1"
+            value="50"
+            aria-label="효과음 볼륨"
+          />
+        </div>
+
         <button id="resetButton" class="button" type="button">다시 시작</button>
       </div>
 
@@ -52,12 +67,7 @@
         <span id="nextBalls" class="next-balls"></span>
       </div>
 
-      <div
-        id="specialBallInfo"
-        class="special-ball-info"
-        aria-live="polite"
-        hidden
-      ></div>
+      <div id="specialBallInfo" class="special-ball-info" aria-live="polite" hidden></div>
 
       <div class="pairs">
         <span class="badge pair-red">1 + 7</span>
@@ -92,19 +102,9 @@
       <section class="modal-dialog" role="dialog" aria-modal="true" aria-labelledby="nicknameModalTitle">
         <h2 id="nicknameModalTitle">주간 랭킹 등록</h2>
         <p class="modal-score">최종 점수 <strong id="finalScoreText">0점</strong></p>
-
         <label class="input-label" for="nicknameInput">닉네임</label>
-        <input
-          id="nicknameInput"
-          class="text-input"
-          type="text"
-          maxlength="12"
-          autocomplete="nickname"
-          placeholder="1~12자 닉네임"
-        />
-
+        <input id="nicknameInput" class="text-input" type="text" maxlength="12" autocomplete="nickname" placeholder="1~12자 닉네임" />
         <p id="nicknameMessage" class="modal-message" aria-live="polite"></p>
-
         <div class="modal-actions">
           <button id="skipRankingButton" class="button" type="button">건너뛰기</button>
           <button id="submitRankingButton" class="button primary-button" type="button">랭킹 등록</button>
@@ -114,6 +114,6 @@
   </main>
 
   <script src="https://cdn.jsdelivr.net/npm/matter-js@0.20.0/build/matter.min.js"></script>
-  <script type="module" src="./game.js?v=34"></script>
+  <script type="module" src="./game.js?v=36"></script>
 </body>
 </html>

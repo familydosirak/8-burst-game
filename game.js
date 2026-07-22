@@ -30,6 +30,8 @@ import {
     msg: document.querySelector("#msg"),
     powerText: document.querySelector("#powerText"),
     powerBar: document.querySelector("#powerBar"),
+    volumeSlider: document.querySelector("#volumeSlider"),
+    volumeText: document.querySelector("#volumeText"),
     currentBall: document.querySelector("#currentBall"),
     nextBalls: document.querySelector("#nextBalls"),
     specialBallInfo: document.querySelector("#specialBallInfo"),
@@ -155,10 +157,10 @@ import {
   const ICE_AIR_FRICTION = 0.01;
 
   // 블랙홀 흡입 및 폭발 설정
-  const BLACK_HOLE_SUCTION_RADIUS = 120;
-  const BLACK_HOLE_BASE_BLAST_RADIUS = 125;
+  const BLACK_HOLE_SUCTION_RADIUS = 130;
+  const BLACK_HOLE_BASE_BLAST_RADIUS = 130;
   const BLACK_HOLE_RADIUS_PER_BALL = 10;
-  const BLACK_HOLE_FORCE_PER_BALL = 1.5;
+  const BLACK_HOLE_FORCE_PER_BALL = 2.5;
 
   /*
    * 특수공 연출 시간
@@ -180,6 +182,19 @@ import {
 
   // 구름공은 공을 관통하고 벽에서 한 번만 반사된다.
   const CLOUD_MAX_WALL_BOUNCES = 2;
+
+  // 구름공이 직접 닿지 않아도 주변 공을 4로 바꾸는 판정 반경
+  const CLOUD_CONVERT_RADIUS = BALL_RADIUS * 2.5;
+
+  // 효과음 설정
+  // 슬라이더 100%일 때의 최대 효과음 크기
+  const EXPLOSION_SOUND_MAX_VOLUME = 0.36;
+  const EXPLOSION_PITCH_PER_COMBO = 0.055;
+
+  const EXPLOSION_MAX_PITCH_MULTIPLIER = 4;
+
+  const SOUND_VOLUME_STORAGE_KEY =
+    "burst8SoundVolume";
 
   /*
    * 검은 구슬 설정
@@ -301,6 +316,21 @@ import {
   // 한 게임 결과에 대해 닉네임 창을 한 번만 연다.
   let rankingModalOpened = false;
   let rankingSubmitting = false;
+
+  // Web Audio API 컨텍스트는 첫 사용자 입력 이후 생성한다.
+  let audioContext = null;
+
+  let soundVolume = Math.min(
+    1,
+    Math.max(
+      0,
+      Number(
+        localStorage.getItem(
+          SOUND_VOLUME_STORAGE_KEY
+        )
+      ) || 0.5
+    )
+  );
   /*
    * 랭킹 새로고침 쿨타임
    *
@@ -1374,6 +1404,142 @@ import {
   }
 
   /* =========================================================
+   * SOUND
+   * ======================================================= */
+
+  function ensureAudioContext() {
+    if (!audioContext) {
+      const AudioContextClass =
+        window.AudioContext || window.webkitAudioContext;
+
+      if (!AudioContextClass) {
+        return null;
+      }
+
+      audioContext = new AudioContextClass();
+    }
+
+    if (audioContext.state === "suspended") {
+      audioContext.resume().catch(() => {});
+    }
+
+    return audioContext;
+  }
+
+  function updateVolumeControl() {
+    if (!ui.volumeSlider || !ui.volumeText) {
+      return;
+    }
+
+    const percent = Math.round(
+      soundVolume * 100
+    );
+
+    ui.volumeSlider.value =
+      String(percent);
+
+    ui.volumeText.textContent =
+      `${percent}%`;
+  }
+
+  function handleVolumeChange(event) {
+    const nextVolume = Math.min(
+      1,
+      Math.max(
+        0,
+        Number(event.target.value) / 100
+      )
+    );
+
+    soundVolume = nextVolume;
+
+    localStorage.setItem(
+      SOUND_VOLUME_STORAGE_KEY,
+      String(soundVolume)
+    );
+
+    updateVolumeControl();
+
+    // 슬라이더 조절 시 짧게 현재 볼륨을 미리 듣는다.
+    if (soundVolume > 0) {
+      playExplosionSound(
+        Math.max(1, combo),
+        0.7,
+        "normal"
+      );
+    }
+  }
+
+  function playExplosionSound(
+    comboValue = combo,
+    strength = 1,
+    soundType = "normal"
+  ) {
+    if (soundVolume <= 0) {
+      return;
+    }
+
+    const audio = ensureAudioContext();
+
+    if (!audio) {
+      return;
+    }
+
+    const now = audio.currentTime;
+    const pitchMultiplier = Math.min(
+      EXPLOSION_MAX_PITCH_MULTIPLIER,
+      1 + Math.max(0, comboValue - 1) * EXPLOSION_PITCH_PER_COMBO
+    );
+
+    const typeSettings = {
+      normal: { frequency: 105, duration: 0.2, wave: "sine" },
+      ice: { frequency: 155, duration: 0.24, wave: "triangle" },
+      cloud: { frequency: 82, duration: 0.27, wave: "sine" },
+      blackHole: { frequency: 62, duration: 0.38, wave: "sawtooth" },
+      rainbow: { frequency: 230, duration: 0.13, wave: "triangle" }
+    };
+
+    const setting = typeSettings[soundType] || typeSettings.normal;
+    const oscillator = audio.createOscillator();
+    const gain = audio.createGain();
+    const filter = audio.createBiquadFilter();
+
+    oscillator.type = setting.wave;
+    oscillator.frequency.setValueAtTime(
+      setting.frequency * pitchMultiplier,
+      now
+    );
+    oscillator.frequency.exponentialRampToValueAtTime(
+      Math.max(35, setting.frequency * 0.48 * pitchMultiplier),
+      now + setting.duration
+    );
+
+    filter.type = "lowpass";
+    filter.frequency.setValueAtTime(
+      1100 + Math.min(comboValue, 20) * 65,
+      now
+    );
+
+    const volume = Math.min(
+      0.32,
+      EXPLOSION_SOUND_MAX_VOLUME *
+        soundVolume *
+        Math.max(0.65, strength)
+    );
+
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.exponentialRampToValueAtTime(volume, now + 0.012);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + setting.duration);
+
+    oscillator.connect(filter);
+    filter.connect(gain);
+    gain.connect(audio.destination);
+
+    oscillator.start(now);
+    oscillator.stop(now + setting.duration + 0.02);
+  }
+
+  /* =========================================================
    * SCORE
    * ======================================================= */
 
@@ -1410,8 +1576,10 @@ import {
     y,
     color,
     gained,
-    strength = 1
+    strength = 1,
+    soundType = "normal"
   ) {
+    playExplosionSound(combo, strength, soundType);
     flash = Math.max(
       flash,
       0.28 * strength
@@ -1832,7 +2000,8 @@ import {
       y,
       COLORS.ice,
       gained,
-      1.35
+      1.35,
+      "ice"
     );
 
     applyBlast(
@@ -1859,6 +2028,49 @@ import {
     }
 
     targetBall.number = 4;
+  }
+
+  /**
+   * 구름공 주변의 일반 숫자 공을 넓은 반경으로 감지해 4로 바꾼다.
+   * 직접 충돌하지 않아도 중심 간 거리가 반경 안이면 적용된다.
+   */
+  function convertNearbyBallsToFour(cloudBall) {
+    if (
+      !cloudBall ||
+      cloudBall.specialType !== "cloud" ||
+      !ballByBodyId.has(cloudBall.body.id)
+    ) {
+      return;
+    }
+
+    const radiusSquared =
+      CLOUD_CONVERT_RADIUS * CLOUD_CONVERT_RADIUS;
+
+    for (let i = 0; i < balls.length; i++) {
+      const target = balls[i];
+
+      if (
+        target === cloudBall ||
+        target.isBlack ||
+        target.specialType ||
+        target.effectLocked ||
+        cloudBall.touchedBodyIds.has(target.body.id)
+      ) {
+        continue;
+      }
+
+      const dx =
+        target.body.position.x - cloudBall.body.position.x;
+      const dy =
+        target.body.position.y - cloudBall.body.position.y;
+
+      if (dx * dx + dy * dy > radiusSquared) {
+        continue;
+      }
+
+      cloudBall.touchedBodyIds.add(target.body.id);
+      convertBallToFour(target);
+    }
   }
 
   /**
@@ -1925,6 +2137,8 @@ import {
             : COLORS.cloud
       });
     }
+
+    playExplosionSound(combo, 1.05, "cloud");
 
     applyBlast(
       x,
@@ -3359,6 +3573,8 @@ import {
   }
 
   function beginCharge(event) {
+    ensureAudioContext();
+
     if (
       moving ||
       gameOver ||
@@ -3807,6 +4023,12 @@ import {
           const gained =
             addScore();
 
+          playExplosionSound(
+            combo,
+            0.72,
+            "rainbow"
+          );
+
           /*
            * 일반 폭발의 createExplosion()을 사용하지 않고
            * 무지개공 전용 점수·콤보 텍스트만 표시한다.
@@ -4028,7 +4250,8 @@ import {
             3,
             1.35 +
               eatenCount * 0.14
-          )
+          ),
+          "blackHole"
         );
 
         applyBlast(
@@ -5166,6 +5389,12 @@ import {
         deltaMilliseconds
       );
 
+      for (let i = 0; i < balls.length; i++) {
+        if (balls[i].specialType === "cloud") {
+          convertNearbyBallsToFour(balls[i]);
+        }
+      }
+
       /*
        * 화면 밖 발사 공이 맵에 들어오지 못한 경우
        * updateOutsideShot 내부에서 턴을 종료한다.
@@ -5272,6 +5501,13 @@ import {
     cancelCharge
   );
 
+  if (ui.volumeSlider) {
+    ui.volumeSlider.addEventListener(
+      "input",
+      handleVolumeChange
+    );
+  }
+
   ui.resetButton.addEventListener(
     "click",
     () => {
@@ -5371,7 +5607,8 @@ import {
    * START
    * ======================================================= */
 
-    resetGame();
+  updateVolumeControl();
+  resetGame();
 
   /*
   * 먼저 localStorage에 저장된
