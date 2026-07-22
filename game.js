@@ -5323,9 +5323,29 @@ import {
    * START
    * ======================================================= */
 
-  resetGame();
-  renderWeeklyRanking();
+    resetGame();
+
+  /*
+  * 먼저 localStorage에 저장된
+  * 랭킹 새로고침 쿨타임을 복원한다.
+  */
   restoreRankingRefreshCooldown();
+
+  /*
+  * 페이지를 새로고침했을 때 쿨타임이 남아 있다면
+  * Firebase에서 랭킹을 다시 불러오지 않는다.
+  */
+  if (
+    rankingRefreshRemainingSeconds() > 0
+  ) {
+    ui.rankingWeek.textContent =
+      getCurrentWeekRange();
+
+    ui.rankingList.innerHTML =
+      '<li class="ranking-empty">새로고침 쿨타임이 끝나면 랭킹을 불러올 수 있습니다.</li>';
+  } else {
+    renderWeeklyRanking();
+  }
 
   if (isFirebaseConfigured()) {
     initializeRanking().catch(error => {
