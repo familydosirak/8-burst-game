@@ -68,14 +68,26 @@ import {
   const LAUNCH_GATE_WIDTH = 112;
 
   /*
-   * 발사 후 이 시간 안에 맵 안으로 들어오지 못하면 공을 삭제한다.
+   * 기존 호환용 설정이다. 현재 발사 공의 필드 진입에는 시간 제한을 두지 않는다.
    */
-  const OUTSIDE_SHOT_TIMEOUT_MS = 1400;
+  const OUTSIDE_SHOT_TIMEOUT_MS = 2000;
 
   /*
-   * 화면 밖으로 지나치게 벗어난 공을 삭제하는 여유 거리다.
+   * 기존 호환용 설정이다. 외곽벽이 캔버스 전체를 감싸므로 현재는 사용하지 않는다.
    */
   const OUTSIDE_DELETE_MARGIN = 130;
+
+  /*
+   * 충돌 카테고리
+   *
+   * 발사 직후에는 발사한 공만 FLOOR_WALL과 충돌하지 않는다.
+   * 기존 필드 공은 항상 바닥 벽에 막혀 발사 구역으로 빠지지 않는다.
+   */
+  const COLLISION_CATEGORY = {
+    BALL: 0x0001,
+    FIELD_WALL: 0x0002,
+    FLOOR_WALL: 0x0004
+  };
 
   // 발사 공은 실제 플레이 영역 아래쪽, 화면 밖에서 시작한다.
   const LAUNCH_Y =
@@ -672,7 +684,13 @@ import {
       40,
       {
         isStatic: true,
-        label: "wall-bottom"
+        label: "wall-bottom",
+        collisionFilter: {
+          category:
+            COLLISION_CATEGORY.FLOOR_WALL,
+          mask:
+            COLLISION_CATEGORY.BALL
+        }
       }
     );
 
@@ -689,16 +707,11 @@ import {
    * 좁은 입구 벽이 존재하지 않는다.
    */
   function openLaunchGate() {
-    if (!launchGate) {
-      return;
-    }
-
-    World.remove(
-      engine.world,
-      launchGate
-    );
-
-    launchGate = null;
+    /*
+     * 바닥 벽은 제거하지 않는다.
+     * 발사한 공의 충돌 필터만 잠시 변경하여
+     * 그 공만 바닥 벽을 통과하게 한다.
+     */
   }
 
   /**
@@ -718,33 +731,72 @@ import {
         40,
         {
           isStatic: true,
-          label: "wall-top"
+          label: "wall-top",
+          collisionFilter: {
+            category:
+              COLLISION_CATEGORY.FIELD_WALL,
+            mask:
+              COLLISION_CATEGORY.BALL
+          }
         }
       ),
 
       /*
-       * 좌우 벽은 플레이 필드 높이까지만 존재한다.
-       * 아래쪽 발사 구역에는 좌우 물리 벽이 없다.
+       * 좌우 외곽벽은 게임 필드와 발사 구역 전체를 감싼다.
+       * 따라서 발사 공도 좌우 바깥으로 나갈 수 없다.
        */
       Bodies.rectangle(
         -20,
-        FLOOR / 2,
+        H / 2,
         40,
-        FLOOR,
+        H,
         {
           isStatic: true,
-          label: "wall-left"
+          label: "wall-left",
+          collisionFilter: {
+            category:
+              COLLISION_CATEGORY.FIELD_WALL,
+            mask:
+              COLLISION_CATEGORY.BALL
+          }
         }
       ),
 
       Bodies.rectangle(
         W + 20,
-        FLOOR / 2,
+        H / 2,
         40,
-        FLOOR,
+        H,
         {
           isStatic: true,
-          label: "wall-right"
+          label: "wall-right",
+          collisionFilter: {
+            category:
+              COLLISION_CATEGORY.FIELD_WALL,
+            mask:
+              COLLISION_CATEGORY.BALL
+          }
+        }
+      ),
+
+      /*
+       * 발사 구역 아래쪽을 막는 캔버스 외곽벽이다.
+       * 발사 공도 이 벽에는 항상 충돌하여 위쪽으로 튕길 수 있다.
+       */
+      Bodies.rectangle(
+        W / 2,
+        H + 20,
+        W,
+        40,
+        {
+          isStatic: true,
+          label: "wall-outer-bottom",
+          collisionFilter: {
+            category:
+              COLLISION_CATEGORY.FIELD_WALL,
+            mask:
+              COLLISION_CATEGORY.BALL
+          }
         }
       )
     ]);
@@ -770,7 +822,15 @@ import {
           ? ICE_AIR_FRICTION
           : NORMAL_AIR_FRICTION,
       isSensor: specialType === "cloud",
-      label: specialType ? `special-${specialType}` : "ball"
+      label: specialType ? `special-${specialType}` : "ball",
+      collisionFilter: {
+        category:
+          COLLISION_CATEGORY.BALL,
+        mask:
+          COLLISION_CATEGORY.BALL |
+          COLLISION_CATEGORY.FIELD_WALL |
+          COLLISION_CATEGORY.FLOOR_WALL
+      }
     });
 
     Body.setVelocity(body, {
@@ -793,7 +853,8 @@ import {
        * 화면 밖에서 발사된 공이 플레이 영역에 들어왔는지 기록한다.
        */
       hasEnteredField: !isShot,
-      launchedAt: isShot ? performance.now() : 0
+      launchedAt: isShot ? performance.now() : 0,
+      floorPassUntil: 0
     };
 
     balls.push(ball);
@@ -2302,8 +2363,10 @@ import {
     const position =
       activeShotBall.body.position;
 
+
     /*
-     * 공 전체가 플레이 영역에 들어오면 입구를 닫는다.
+     * 공 전체가 플레이 영역에 들어오면 즉시
+     * 바닥 벽 충돌을 복구한다.
      */
     if (
       !activeShotBall.hasEnteredField &&
@@ -2311,6 +2374,12 @@ import {
         FLOOR - BALL_RADIUS - 4
     ) {
       activeShotBall.hasEnteredField = true;
+
+      activeShotBall.body.collisionFilter.mask =
+        COLLISION_CATEGORY.BALL |
+        COLLISION_CATEGORY.FIELD_WALL |
+        COLLISION_CATEGORY.FLOOR_WALL;
+
       closeLaunchGate();
       return false;
     }
@@ -2319,73 +2388,11 @@ import {
       return false;
     }
 
-    const elapsed =
-      now - activeShotBall.launchedAt;
-
-    const outsideTooFar =
-      position.y >
-        H + OUTSIDE_DELETE_MARGIN ||
-      position.x <
-        -OUTSIDE_DELETE_MARGIN ||
-      position.x >
-        W + OUTSIDE_DELETE_MARGIN;
-
     /*
-     * 제한 시간 안에 들어오지 못했거나 화면 밖으로 멀리 나가면
-     * 삭제하지 않고 필드 아래쪽 안전 위치로 되돌린다.
+     * 진입 시간 제한은 두지 않는다.
+     * 발사 공은 필드에 들어오기 전까지 구분벽만 계속 통과하며,
+     * 캔버스 외곽벽에는 항상 충돌한다.
      */
-    if (
-      elapsed >= OUTSIDE_SHOT_TIMEOUT_MS ||
-      outsideTooFar
-    ) {
-      const returnedBall =
-        activeShotBall;
-
-      const safeX = Math.min(
-        W - BALL_RADIUS - 4,
-        Math.max(
-          BALL_RADIUS + 4,
-          position.x
-        )
-      );
-
-      Body.setPosition(
-        returnedBall.body,
-        {
-          x: safeX,
-          y:
-            FLOOR -
-            BALL_RADIUS -
-            8
-        }
-      );
-
-      Body.setVelocity(
-        returnedBall.body,
-        {
-          x: 0,
-          y: 0
-        }
-      );
-
-      Body.setAngularVelocity(
-        returnedBall.body,
-        0
-      );
-
-      returnedBall.hasEnteredField = true;
-      activeShotBall = null;
-      closeLaunchGate();
-
-      setStatus(
-        "필드 밖으로 나간 공을 안쪽으로 되돌렸습니다.",
-        "RETURN"
-      );
-
-      finishTurn();
-      return true;
-    }
-
     return false;
   }
 
@@ -2420,6 +2427,15 @@ import {
       false,
       specialType
     );
+
+    /*
+     * 발사한 공만 필드에 진입하기 전까지 구분벽을 통과한다.
+     * 좌우·위·아래 캔버스 외곽벽과 다른 공에는 항상 충돌한다.
+     */
+    activeShotBall.body.collisionFilter.mask =
+      COLLISION_CATEGORY.BALL |
+      COLLISION_CATEGORY.FIELD_WALL;
+
 
     // 발사 즉시 준비 공을 다음 숫자로 변경한다.
     advanceQueueImmediately();
