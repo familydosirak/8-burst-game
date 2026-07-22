@@ -57,7 +57,7 @@ import {
   const BALL_RADIUS = 18;
 
   // 화면에 공이 이 개수 이상이면 과부하 상태가 된다.
-  const BALL_COUNT_LIMIT = 70;
+  const BALL_COUNT_LIMIT = 65;
   
   const SHOOT_X = W / 2;
 
@@ -2448,7 +2448,7 @@ import {
 
     setStatus(
       overload
-        ? "과부하 해소 샷! 70 아래로 낮추세요."
+        ? "과부하 해소 샷! 65 아래로 낮추세요."
         : "공이 움직이는 중입니다.",
 
       overload
@@ -3250,7 +3250,7 @@ import {
         overload = true;
 
         setStatus(
-          "OVERLOAD! 다음 한 발로 70 아래로 낮추세요.",
+          "OVERLOAD! 다음 한 발로 65 아래로 낮추세요.",
           "OVERLOAD"
         );
       }
