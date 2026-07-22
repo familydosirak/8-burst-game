@@ -56,10 +56,10 @@ import {
   const TOP = 20;
   const FLOOR = 590;
 
-  const BALL_RADIUS = 18;
+  const BALL_RADIUS = 11;
 
-  // 화면에 공이 이 개수 이상이면 과부하 상태가 된다.
-  const BALL_COUNT_LIMIT = 65;
+  // 화면에 공이 이 개수 이상이면 과부하 상태가 된다. 작은 공 기준 130개.
+  const BALL_COUNT_LIMIT = 120;
   
   const SHOOT_X = W / 2;
 
@@ -93,15 +93,15 @@ import {
 
   // 발사 공은 실제 플레이 영역 아래쪽, 화면 밖에서 시작한다.
   const LAUNCH_Y =
-    FLOOR + BALL_RADIUS + 26;
+    FLOOR + BALL_RADIUS + 18;
 
   /*
    * 발사 공간에 표시되는 다음 공 대기열 설정
    */
-  const LAUNCH_QUEUE_RADIUS = 14;
-  const LAUNCH_QUEUE_GAP = 10;
+  const LAUNCH_QUEUE_RADIUS = 11;
+  const LAUNCH_QUEUE_GAP = 7;
   const LAUNCH_QUEUE_START_X =
-    SHOOT_X + BALL_RADIUS + 54;
+    SHOOT_X + BALL_RADIUS + 44;
 
   const MIN_POWER = 1;
   const MAX_POWER = 30;
@@ -110,14 +110,14 @@ import {
   // 180도까지 허용하면 발사 공의 완전한 뒤쪽도 조준할 수 있다.
   const MAX_AIM_ANGLE_DEGREES = 180;
 
-  const BLAST_RADIUS = 123;
-  const BLAST_FORCE = 16;
+  const BLAST_RADIUS = 83;
+  const BLAST_FORCE = 14;
 
   // 첫 번째 폭발 점수
   const BASE_COMBO_SCORE = 8;
 
   // 콤보마다 적용되는 점수 배율
-  const COMBO_SCORE_MULTIPLIER = 1.35;
+  const COMBO_SCORE_MULTIPLIER = 1.26;
 
   /*
   * 숫자 생성 밸런스
@@ -157,9 +157,9 @@ import {
   const ICE_AIR_FRICTION = 0.01;
 
   // 블랙홀 흡입 및 폭발 설정
-  const BLACK_HOLE_SUCTION_RADIUS = 130;
-  const BLACK_HOLE_BASE_BLAST_RADIUS = 130;
-  const BLACK_HOLE_RADIUS_PER_BALL = 10;
+  const BLACK_HOLE_SUCTION_RADIUS = 100;
+  const BLACK_HOLE_BASE_BLAST_RADIUS = 100;
+  const BLACK_HOLE_RADIUS_PER_BALL = 6;
   const BLACK_HOLE_FORCE_PER_BALL = 2.5;
 
   /*
@@ -178,19 +178,20 @@ import {
   /*
    * 발사 공이 숫자 공을 터뜨렸을 때 받는 반동
    */
-  const SHOT_EXPLOSION_RECOIL = 9;
+  const SHOT_EXPLOSION_RECOIL = 8;
 
   // 구름공은 공을 관통하고 벽에서 한 번만 반사된다.
   const CLOUD_MAX_WALL_BOUNCES = 2;
 
   // 구름공이 직접 닿지 않아도 주변 공을 4로 바꾸는 판정 반경
-  const CLOUD_CONVERT_RADIUS = BALL_RADIUS * 2.5;
+  const CLOUD_CONVERT_RADIUS = BALL_RADIUS * 3.8;
 
   // 효과음 설정
   // 슬라이더 100%일 때의 최대 효과음 크기
   const EXPLOSION_SOUND_MAX_VOLUME = 0.36;
   const EXPLOSION_PITCH_PER_COMBO = 0.055;
 
+  // 기존보다 최대 피치를 조금 더 높인다.
   const EXPLOSION_MAX_PITCH_MULTIPLIER = 4;
 
   const SOUND_VOLUME_STORAGE_KEY =
@@ -203,7 +204,7 @@ import {
    *   몇 턴마다 검은 구슬을 한 개 추가할지 설정한다.
    *
    */
-  const BLACK_BALL_INTERVAL = 10;
+  const BLACK_BALL_INTERVAL = 5;
   const BLACK_BALL_COLOR = "#111111";
 
   /*
@@ -909,14 +910,26 @@ import {
    * ======================================================= */
 
   function seedField() {
-    [7, 7, 7, 7, 7, 7].forEach((count, row) => {
-      const gap = 70;
-      const startX = W / 2 - ((count - 1) * gap) / 2;
+    /*
+     * 작은 공 크기에 맞춰 초기 배치도 촘촘하게 구성한다.
+     * 10개씩 8줄, 총 80개로 시작한다.
+     */
+    const rowCounts = [10, 10, 10, 10, 10, 10, 10, 10];
+    const horizontalGap = BALL_RADIUS * 4.35;
+    const verticalGap = BALL_RADIUS * 2.75;
+    const startY = TOP + BALL_RADIUS + 34;
+
+    rowCounts.forEach((count, row) => {
+      const startX =
+        W / 2 -
+        ((count - 1) * horizontalGap) / 2;
 
       for (let i = 0; i < count; i++) {
         addBall(
-          startX + i * gap + (row % 2 ? 10 : -10),
-          92 + row * 42,
+          startX +
+            i * horizontalGap +
+            (row % 2 ? BALL_RADIUS * 0.45 : -BALL_RADIUS * 0.45),
+          startY + row * verticalGap,
           randomNumber()
         );
       }
@@ -927,7 +940,7 @@ import {
     /*
      * 매 라운드 공을 추가한다.
      */
-    return 8 + Math.floor(currentTurn / 6);
+    return 20 + Math.floor(currentTurn / 3);
   }
 
   /**
@@ -969,7 +982,7 @@ import {
    */
   function findWaveSpawnPosition() {
     const minimumDistance =
-      BALL_RADIUS * 2 + 6;
+      BALL_RADIUS * 2 + 3;
 
     const minimumDistanceSquared =
       minimumDistance * minimumDistance;
@@ -1003,17 +1016,17 @@ import {
     */
     for (let attempt = 0; attempt < 1500; attempt++) {
       const x =
-        BALL_RADIUS + 10 +
+        BALL_RADIUS + 6 +
         Math.random() *
           (
             W -
-            (BALL_RADIUS + 10) * 2
+            (BALL_RADIUS + 6) * 2
           );
 
-      const spawnTop = TOP + BALL_RADIUS + 15;
+      const spawnTop = TOP + BALL_RADIUS + 8;
       const spawnBottom = Math.max(
         spawnTop,
-        LAUNCH_Y - BALL_RADIUS - 120
+        FLOOR - BALL_RADIUS - 20
       );
 
       const y =
@@ -1034,13 +1047,13 @@ import {
     const gap = minimumDistance;
 
     for (
-      let y = TOP + BALL_RADIUS + 15;
-      y <= LAUNCH_Y - BALL_RADIUS - 120;
+      let y = TOP + BALL_RADIUS + 8;
+      y <= FLOOR - BALL_RADIUS - 20;
       y += gap
     ) {
       for (
-        let x = BALL_RADIUS + 10;
-        x <= W - BALL_RADIUS - 10;
+        let x = BALL_RADIUS + 6;
+        x <= W - BALL_RADIUS - 6;
         x += gap
       ) {
         if (isPositionClear(x, y)) {
@@ -1063,16 +1076,16 @@ import {
     let tries = 0;
 
     const maxTries = 1000;
-    const minimumDistance = BALL_RADIUS * 2 + 9;
+    const minimumDistance = BALL_RADIUS * 2 + 4;
     const minimumDistanceSquared =
       minimumDistance * minimumDistance;
 
     while (tries++ < maxTries) {
       const x =
         BALL_RADIUS +
-        15 +
+        8 +
         Math.random() *
-          (W - (BALL_RADIUS + 15) * 2);
+          (W - (BALL_RADIUS + 8) * 2);
 
       const y = 58 + Math.random() * 190;
 
@@ -2662,7 +2675,7 @@ import {
 
     setStatus(
       overload
-        ? "과부하 해소 샷! 65 아래로 낮추세요."
+        ? "과부하 해소 샷! 120 아래로 낮추세요."
         : "공이 움직이는 중입니다.",
 
       overload
@@ -3446,7 +3459,7 @@ import {
           overload = true;
 
           setStatus(
-            "OVERLOAD! 다음 한 발로 85 아래로 낮추세요.",
+            "OVERLOAD! 다음 한 발로 170 아래로 낮추세요.",
             "OVERLOAD"
           );
         }
@@ -3494,7 +3507,7 @@ import {
         overload = true;
 
         setStatus(
-          "OVERLOAD! 다음 한 발로 65 아래로 낮추세요.",
+          "OVERLOAD! 다음 한 발로 170 아래로 낮추세요.",
           "OVERLOAD"
         );
       }
@@ -4789,9 +4802,9 @@ import {
     ctx.beginPath();
 
     ctx.arc(
-      position.x - 6,
-      position.y - 7,
-      5,
+      position.x - 4,
+      position.y - 4,
+      3,
       0,
       Math.PI * 2
     );
@@ -4808,7 +4821,7 @@ import {
         : numberTextColor(ball.number);
 
       ctx.font =
-        "900 18px system-ui";
+        "900 13px system-ui";
 
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
@@ -4933,7 +4946,7 @@ import {
       shotTextColor(currentNumber);
 
     ctx.font =
-      "900 18px system-ui";
+      "900 13px system-ui";
 
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
@@ -5068,8 +5081,8 @@ import {
 
       ctx.font =
         isSpecialShot(value)
-          ? "900 14px system-ui"
-          : "900 15px system-ui";
+          ? "900 11px system-ui"
+          : "900 12px system-ui";
 
       ctx.fillText(
         shotDisplay(value),
