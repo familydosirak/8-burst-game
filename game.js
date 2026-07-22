@@ -2432,7 +2432,7 @@ import {
 
     setStatus(
       overload
-        ? "과부하 해소 샷! 180 아래로 낮추세요."
+        ? "과부하 해소 샷! 85 아래로 낮추세요."
         : "공이 움직이는 중입니다.",
 
       overload
@@ -3232,7 +3232,7 @@ import {
         overload = true;
 
         setStatus(
-          "OVERLOAD! 다음 한 발로 180 아래로 낮추세요.",
+          "OVERLOAD! 다음 한 발로 85 아래로 낮추세요.",
           "OVERLOAD"
         );
       }
