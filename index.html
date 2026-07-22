@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>8 Burst</title>
-  <link rel="stylesheet" href="./style.css?v=19" />
+  <link rel="stylesheet" href="./style.css?v=20" />
 </head>
 <body>
   <main class="app">
@@ -19,7 +19,10 @@
 
     <section class="card">
       <div class="row">
-        <span>공 개수 <strong id="load">0</strong>/135</span>
+        <div class="ball-count-info">
+          <span>공 개수 <strong id="load">0</strong>/135</span>
+          <span id="nextWaveText" class="next-wave-text">다음 턴에 20개의 공이 추가됩니다.</span>
+        </div>
         <span id="state" class="badge state-badge">READY</span>
       </div>
       <div class="meter"><div id="loadBar" class="meter-fill"></div></div>
@@ -114,6 +117,6 @@
   </main>
 
   <script src="https://cdn.jsdelivr.net/npm/matter-js@0.20.0/build/matter.min.js"></script>
-  <script type="module" src="./game.js?v=38"></script>
+  <script type="module" src="./game.js?v=39"></script>
 </body>
 </html>
