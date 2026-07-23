@@ -1,11 +1,11 @@
 import {
   getCurrentWeekId,
   getWeeklyRanking,
-  initializeRanking,
+  getCurrentRankingUserId,
   isFirebaseConfigured,
   submitWeeklyScore,
   getCurrentWeekRange
-} from "./firebase-ranking.js";
+} from "./firebase-ranking.js?v=2";
 
 (() => {
   "use strict";
@@ -359,6 +359,7 @@ import {
 
   let weeklyRankingItems = [];
   let rankingCurrentPage = 1;
+  let currentRankingUid = "";
 
   let rankingRefreshTimer = null;
   let rankingRefreshCooldownUntil =
@@ -3107,18 +3108,12 @@ import {
     }
   }
 
-  function normalizeRankingNickname(value) {
-    return String(value || "")
-      .trim()
-      .toLocaleLowerCase("ko-KR");
-  }
-
-  function getSavedRankingNickname() {
-    return (
-      localStorage.getItem(
-        "burst8Nickname"
-      ) || ""
-    ).trim();
+  function isMyRankingItem(item) {
+    return Boolean(
+      currentRankingUid &&
+      String(item?.uid || "") ===
+        currentRankingUid
+    );
   }
 
   function updateMyRankingDisplay() {
@@ -3126,27 +3121,15 @@ import {
       return;
     }
 
-    const nickname =
-      getSavedRankingNickname();
-
-    if (!nickname) {
+    if (!currentRankingUid) {
       ui.myRankingText.textContent =
-        "내 랭킹 미등록";
+        "내 랭킹 확인 중";
       return;
     }
 
-    const normalizedNickname =
-      normalizeRankingNickname(
-        nickname
-      );
-
     const myRanking =
       weeklyRankingItems.find(
-        item =>
-          normalizeRankingNickname(
-            item.nickname
-          ) ===
-          normalizedNickname
+        isMyRankingItem
       );
 
     if (!myRanking) {
@@ -3172,19 +3155,10 @@ import {
     row.className =
       "ranking-item";
 
-    const savedNickname =
-      getSavedRankingNickname();
-
-    if (
-      savedNickname &&
-      normalizeRankingNickname(
-        savedNickname
-      ) ===
-        normalizeRankingNickname(
-          item.nickname
-        )
-    ) {
-      row.classList.add("my-ranking-row");
+    if (isMyRankingItem(item)) {
+      row.classList.add(
+        "my-ranking-row"
+      );
     }
 
     const rank =
@@ -3205,11 +3179,7 @@ import {
     player.textContent =
       item.nickname;
 
-    if (
-      row.classList.contains(
-        "my-ranking-row"
-      )
-    ) {
+    if (isMyRankingItem(item)) {
       const meBadge =
         document.createElement("span");
 
@@ -3489,7 +3459,8 @@ import {
   }
 
   function saveRankingCache(
-    rankings
+    rankings,
+    currentUserUid = currentRankingUid
   ) {
     try {
       localStorage.setItem(
@@ -3499,6 +3470,8 @@ import {
             getCurrentWeekId(),
           savedAt:
             Date.now(),
+          currentUserUid:
+            String(currentUserUid || ""),
           rankings
         })
       );
@@ -3538,7 +3511,15 @@ import {
         return null;
       }
 
-      return cache.rankings;
+      return {
+        currentUserUid:
+          String(
+            cache.currentUserUid ||
+            ""
+          ),
+        rankings:
+          cache.rankings
+      };
     } catch (error) {
       console.warn(
         "랭킹 캐시 불러오기 실패:",
@@ -3557,6 +3538,8 @@ import {
       rankings.map(
         (item, index) => ({
           ...item,
+          uid:
+            String(item?.uid || ""),
           rank:
             Number(item.rank) > 0
               ? Number(
@@ -3596,6 +3579,7 @@ import {
 
     if (!isFirebaseConfigured()) {
       weeklyRankingItems = [];
+      currentRankingUid = "";
 
       ui.rankingList.innerHTML =
         '<li class="ranking-empty">firebase-config.js에 프로젝트 설정값을 입력해 주세요.</li>';
@@ -3635,6 +3619,13 @@ import {
       ui.rankingWeek.textContent =
         getCurrentWeekRange();
 
+      currentRankingUid =
+        String(
+          result?.currentUserUid ||
+          currentRankingUid ||
+          ""
+        );
+
       const rankings =
         Array.isArray(
           result?.rankings
@@ -3643,7 +3634,8 @@ import {
           : [];
 
       saveRankingCache(
-        rankings
+        rankings,
+        currentRankingUid
       );
 
       applyRankingData(
@@ -3656,12 +3648,16 @@ import {
         error
       );
 
-      const cachedRankings =
+      const rankingCache =
         readRankingCache();
 
-      if (cachedRankings) {
+      if (rankingCache) {
+        currentRankingUid =
+          rankingCache.currentUserUid ||
+          currentRankingUid;
+
         applyRankingData(
-          cachedRankings,
+          rankingCache.rankings,
           resetPage
         );
 
@@ -6221,12 +6217,16 @@ import {
     ui.rankingWeek.textContent =
       getCurrentWeekRange();
 
-    const cachedRankings =
+    const rankingCache =
       readRankingCache();
 
-    if (cachedRankings) {
+    if (rankingCache) {
+      currentRankingUid =
+        rankingCache.currentUserUid ||
+        currentRankingUid;
+
       applyRankingData(
-        cachedRankings
+        rankingCache.rankings
       );
     } else {
       ui.rankingList.innerHTML =
@@ -6239,9 +6239,23 @@ import {
   }
 
   if (isFirebaseConfigured()) {
-    initializeRanking().catch(error => {
-      console.error("Firebase 익명 로그인 실패:", error);
-    });
+    getCurrentRankingUserId()
+      .then(uid => {
+        currentRankingUid =
+          String(uid || "");
+
+        if (weeklyRankingItems.length > 0) {
+          renderRankingPage();
+        } else {
+          updateMyRankingDisplay();
+        }
+      })
+      .catch(error => {
+        console.error(
+          "Firebase 익명 로그인 실패:",
+          error
+        );
+      });
   }
 
   requestAnimationFrame(

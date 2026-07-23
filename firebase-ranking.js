@@ -46,11 +46,17 @@ export function getCurrentWeekId(date = new Date()) {
   }).formatToParts(date);
 
   const values = Object.fromEntries(
-    parts.filter(part => part.type !== "literal").map(part => [part.type, part.value])
+    parts
+      .filter(part => part.type !== "literal")
+      .map(part => [part.type, part.value])
   );
 
   const koreanDate = new Date(
-    Date.UTC(Number(values.year), Number(values.month) - 1, Number(values.day))
+    Date.UTC(
+      Number(values.year),
+      Number(values.month) - 1,
+      Number(values.day)
+    )
   );
 
   const day = koreanDate.getUTCDay() || 7;
@@ -103,7 +109,17 @@ export async function initializeRanking() {
 }
 
 /**
+ * 현재 브라우저의 Firebase 익명 사용자 UID를 반환한다.
+ * 닉네임이 같아도 UID는 사용자마다 다르다.
+ */
+export async function getCurrentRankingUserId() {
+  const user = await initializeRanking();
+  return user.uid;
+}
+
+/**
  * 해당 브라우저 익명 계정의 이번 주 최고 점수만 저장한다.
+ * 문서 ID 자체가 user.uid이므로 같은 닉네임도 서로 별도 기록된다.
  */
 export async function submitWeeklyScore({ nickname, score, bestCombo, turn }) {
   const user = await initializeRanking();
@@ -112,7 +128,7 @@ export async function submitWeeklyScore({ nickname, score, bestCombo, turn }) {
 
   const cleanNickname = sanitizeNickname(nickname);
   const cleanScore = normalizeInteger(score, 0, 1_000_000_000_000);
-  const cleanBestCombo = normalizeInteger(bestCombo, 0, 1_000_0000);
+  const cleanBestCombo = normalizeInteger(bestCombo, 0, 10_000_000);
   const cleanTurn = normalizeInteger(turn, 0, 1_000_000);
 
   return runTransaction(db, async transaction => {
@@ -125,7 +141,8 @@ export async function submitWeeklyScore({ nickname, score, bestCombo, turn }) {
       return {
         updated: false,
         previousScore,
-        weekId
+        weekId,
+        uid: user.uid
       };
     }
 
@@ -142,30 +159,37 @@ export async function submitWeeklyScore({ nickname, score, bestCombo, turn }) {
     return {
       updated: true,
       previousScore,
-      weekId
+      weekId,
+      uid: user.uid
     };
   });
 }
 
+/**
+ * 이번 주 랭킹을 점수 내림차순으로 조회한다.
+ * 각 항목에 uid를 포함하여 닉네임이 아닌 UID로 본인 여부를 판별한다.
+ */
 export async function getWeeklyRanking(maxResults = 20) {
-  await initializeRanking();
+  const user = await initializeRanking();
 
   const weekId = getCurrentWeekId();
   const scoresRef = collection(db, "weeklyRankings", weekId, "scores");
   const rankingQuery = query(
     scoresRef,
     orderBy("score", "desc"),
-    limit(Math.max(1, Math.min(100, Number(maxResults) || 20)))
+    limit(Math.max(1, Math.min(500, Number(maxResults) || 20)))
   );
 
   const snapshot = await getDocs(rankingQuery);
 
   return {
     weekId,
+    currentUserUid: user.uid,
     rankings: snapshot.docs.map((scoreDocument, index) => {
       const data = scoreDocument.data();
 
       return {
+        uid: String(data.uid || scoreDocument.id),
         rank: index + 1,
         nickname: String(data.nickname || "익명"),
         score: Number(data.score || 0),
