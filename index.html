@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>8 Burst</title>
-  <link rel="stylesheet" href="./style.css?v=20" />
+  <link rel="stylesheet" href="./style.css?v=21" />
 </head>
 <body>
   <main class="app">
@@ -88,16 +88,48 @@
     </section>
 
     <section class="card ranking-card">
-      <div class="row">
+      <div class="row ranking-header">
         <div>
           <h2 class="section-title">이번 주 랭킹</h2>
           <span id="rankingWeek" class="muted"></span>
         </div>
-        <button id="refreshRankingButton" class="button" type="button">새로고침</button>
+
+        <div class="ranking-actions">
+          <span id="myRankingText" class="my-ranking-text">내 랭킹 미등록</span>
+          <button id="refreshRankingButton" class="button" type="button">새로고침</button>
+        </div>
       </div>
+
       <ol id="rankingList" class="ranking-list">
         <li class="ranking-empty">Firebase 설정 후 랭킹을 불러옵니다.</li>
       </ol>
+
+      <nav
+        id="rankingPagination"
+        class="ranking-pagination"
+        aria-label="랭킹 페이지 이동"
+        hidden
+      >
+        <button
+          id="rankingPrevButton"
+          class="ranking-nav-button"
+          type="button"
+          aria-label="이전 랭킹 페이지"
+        >
+          이전
+        </button>
+
+        <div id="rankingPageNumbers" class="ranking-page-numbers"></div>
+
+        <button
+          id="rankingNextButton"
+          class="ranking-nav-button"
+          type="button"
+          aria-label="다음 랭킹 페이지"
+        >
+          다음
+        </button>
+      </nav>
     </section>
 
     <div id="nicknameModal" class="modal" hidden>
@@ -117,6 +149,6 @@
   </main>
 
   <script src="https://cdn.jsdelivr.net/npm/matter-js@0.20.0/build/matter.min.js"></script>
-  <script type="module" src="./game.js?v=39"></script>
+  <script type="module" src="./game.js?v=40"></script>
 </body>
 </html>

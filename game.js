@@ -39,6 +39,11 @@ import {
     resetButton: document.querySelector("#resetButton"),
     rankingWeek: document.querySelector("#rankingWeek"),
     rankingList: document.querySelector("#rankingList"),
+    myRankingText: document.querySelector("#myRankingText"),
+    rankingPagination: document.querySelector("#rankingPagination"),
+    rankingPrevButton: document.querySelector("#rankingPrevButton"),
+    rankingNextButton: document.querySelector("#rankingNextButton"),
+    rankingPageNumbers: document.querySelector("#rankingPageNumbers"),
     refreshRankingButton: document.querySelector("#refreshRankingButton"),
     nicknameModal: document.querySelector("#nicknameModal"),
     finalScoreText: document.querySelector("#finalScoreText"),
@@ -342,6 +347,18 @@ import {
   const RANKING_REFRESH_COOLDOWN_MS = 30 * 1000;
   const RANKING_REFRESH_STORAGE_KEY =
     "burst8RankingRefreshCooldownUntil";
+
+  /*
+   * 랭킹은 Firebase에서 넉넉하게 받아온 뒤
+   * 브라우저에서 10명 단위로 나누어 표시한다.
+   */
+  const RANKING_PAGE_SIZE = 10;
+  const RANKING_FETCH_LIMIT = 500;
+  const RANKING_CACHE_STORAGE_KEY =
+    "burst8WeeklyRankingCache";
+
+  let weeklyRankingItems = [];
+  let rankingCurrentPage = 1;
 
   let rankingRefreshTimer = null;
   let rankingRefreshCooldownUntil =
@@ -3090,82 +3107,582 @@ import {
     }
   }
 
-  async function renderWeeklyRanking() {
-    ui.rankingWeek.textContent = getCurrentWeekRange();
+  function normalizeRankingNickname(value) {
+    return String(value || "")
+      .trim()
+      .toLocaleLowerCase("ko-KR");
+  }
+
+  function getSavedRankingNickname() {
+    return (
+      localStorage.getItem(
+        "burst8Nickname"
+      ) || ""
+    ).trim();
+  }
+
+  function updateMyRankingDisplay() {
+    if (!ui.myRankingText) {
+      return;
+    }
+
+    const nickname =
+      getSavedRankingNickname();
+
+    if (!nickname) {
+      ui.myRankingText.textContent =
+        "내 랭킹 미등록";
+      return;
+    }
+
+    const normalizedNickname =
+      normalizeRankingNickname(
+        nickname
+      );
+
+    const myRanking =
+      weeklyRankingItems.find(
+        item =>
+          normalizeRankingNickname(
+            item.nickname
+          ) ===
+          normalizedNickname
+      );
+
+    if (!myRanking) {
+      ui.myRankingText.textContent =
+        weeklyRankingItems.length >=
+        RANKING_FETCH_LIMIT
+          ? `내 랭킹 ${RANKING_FETCH_LIMIT}위 밖`
+          : "내 랭킹 등록 기록 없음";
+
+      return;
+    }
+
+    ui.myRankingText.textContent =
+      `내 랭킹 ${myRanking.rank}위 · ${Number(
+        myRanking.score || 0
+      ).toLocaleString()}점`;
+  }
+
+  function createRankingRow(item) {
+    const row =
+      document.createElement("li");
+
+    row.className =
+      "ranking-item";
+
+    const savedNickname =
+      getSavedRankingNickname();
+
+    if (
+      savedNickname &&
+      normalizeRankingNickname(
+        savedNickname
+      ) ===
+        normalizeRankingNickname(
+          item.nickname
+        )
+    ) {
+      row.classList.add("my-ranking-row");
+    }
+
+    const rank =
+      document.createElement("span");
+
+    rank.className =
+      "ranking-rank";
+
+    rank.textContent =
+      `${item.rank}위`;
+
+    const player =
+      document.createElement("span");
+
+    player.className =
+      "ranking-name";
+
+    player.textContent =
+      item.nickname;
+
+    if (
+      row.classList.contains(
+        "my-ranking-row"
+      )
+    ) {
+      const meBadge =
+        document.createElement("span");
+
+      meBadge.className =
+        "ranking-me-badge";
+
+      meBadge.textContent = "나";
+
+      player.appendChild(
+        meBadge
+      );
+    }
+
+    const resultBox =
+      document.createElement("span");
+
+    resultBox.className =
+      "ranking-result";
+
+    const scoreText =
+      document.createElement("strong");
+
+    scoreText.className =
+      "ranking-score";
+
+    scoreText.textContent =
+      `${Number(
+        item.score || 0
+      ).toLocaleString()}점`;
+
+    const comboText =
+      document.createElement("span");
+
+    comboText.className =
+      "ranking-combo";
+
+    comboText.textContent =
+      `최고 ${item.bestCombo ?? 0}콤보`;
+
+    resultBox.append(
+      scoreText,
+      comboText
+    );
+
+    row.append(
+      rank,
+      player,
+      resultBox
+    );
+
+    return row;
+  }
+
+  function rankingTotalPages() {
+    return Math.max(
+      1,
+      Math.ceil(
+        weeklyRankingItems.length /
+        RANKING_PAGE_SIZE
+      )
+    );
+  }
+
+  function pageNumbersToDisplay(
+    currentPage,
+    totalPages
+  ) {
+    if (totalPages <= 7) {
+      return Array.from(
+        {
+          length: totalPages
+        },
+        (_, index) =>
+          index + 1
+      );
+    }
+
+    const pageSet =
+      new Set([
+        1,
+        totalPages,
+        currentPage - 2,
+        currentPage - 1,
+        currentPage,
+        currentPage + 1,
+        currentPage + 2
+      ]);
+
+    return [...pageSet]
+      .filter(
+        page =>
+          page >= 1 &&
+          page <= totalPages
+      )
+      .sort(
+        (a, b) => a - b
+      );
+  }
+
+  function renderRankingPagination() {
+    if (
+      !ui.rankingPagination ||
+      !ui.rankingPageNumbers
+    ) {
+      return;
+    }
+
+    const totalPages =
+      rankingTotalPages();
+
+    ui.rankingPagination.hidden =
+      weeklyRankingItems.length <=
+      RANKING_PAGE_SIZE;
+
+    ui.rankingPrevButton.disabled =
+      rankingCurrentPage <= 1;
+
+    ui.rankingNextButton.disabled =
+      rankingCurrentPage >=
+      totalPages;
+
+    const pageNumbers =
+      pageNumbersToDisplay(
+        rankingCurrentPage,
+        totalPages
+      );
+
+    const fragment =
+      document.createDocumentFragment();
+
+    for (
+      let i = 0;
+      i < pageNumbers.length;
+      i++
+    ) {
+      const page =
+        pageNumbers[i];
+
+      if (
+        i > 0 &&
+        page -
+          pageNumbers[i - 1] >
+          1
+      ) {
+        const ellipsis =
+          document.createElement(
+            "span"
+          );
+
+        ellipsis.className =
+          "ranking-page-ellipsis";
+
+        ellipsis.textContent =
+          "…";
+
+        fragment.appendChild(
+          ellipsis
+        );
+      }
+
+      const button =
+        document.createElement(
+          "button"
+        );
+
+      button.type = "button";
+      button.className =
+        "ranking-page-button";
+
+      button.dataset.page =
+        String(page);
+
+      button.textContent =
+        String(page);
+
+      button.setAttribute(
+        "aria-label",
+        `${page}페이지`
+      );
+
+      if (
+        page ===
+        rankingCurrentPage
+      ) {
+        button.classList.add(
+          "active"
+        );
+
+        button.setAttribute(
+          "aria-current",
+          "page"
+        );
+      }
+
+      fragment.appendChild(
+        button
+      );
+    }
+
+    ui.rankingPageNumbers.replaceChildren(
+      fragment
+    );
+  }
+
+  function renderRankingPage() {
+    if (
+      weeklyRankingItems.length === 0
+    ) {
+      if (ui.rankingPagination) {
+        ui.rankingPagination.hidden =
+          true;
+      }
+
+      updateMyRankingDisplay();
+      return;
+    }
+
+    const totalPages =
+      rankingTotalPages();
+
+    rankingCurrentPage =
+      Math.min(
+        totalPages,
+        Math.max(
+          1,
+          rankingCurrentPage
+        )
+      );
+
+    const startIndex =
+      (
+        rankingCurrentPage - 1
+      ) *
+      RANKING_PAGE_SIZE;
+
+    const pageItems =
+      weeklyRankingItems.slice(
+        startIndex,
+        startIndex +
+          RANKING_PAGE_SIZE
+      );
+
+    ui.rankingList.replaceChildren(
+      ...pageItems.map(
+        createRankingRow
+      )
+    );
+
+    updateMyRankingDisplay();
+    renderRankingPagination();
+  }
+
+  function setRankingPage(page) {
+    const totalPages =
+      rankingTotalPages();
+
+    const nextPage =
+      Math.min(
+        totalPages,
+        Math.max(
+          1,
+          Number(page) || 1
+        )
+      );
+
+    if (
+      nextPage ===
+      rankingCurrentPage
+    ) {
+      return;
+    }
+
+    rankingCurrentPage =
+      nextPage;
+
+    renderRankingPage();
+  }
+
+  function saveRankingCache(
+    rankings
+  ) {
+    try {
+      localStorage.setItem(
+        RANKING_CACHE_STORAGE_KEY,
+        JSON.stringify({
+          weekId:
+            getCurrentWeekId(),
+          savedAt:
+            Date.now(),
+          rankings
+        })
+      );
+    } catch (error) {
+      console.warn(
+        "랭킹 캐시 저장 실패:",
+        error
+      );
+    }
+  }
+
+  function readRankingCache() {
+    try {
+      const raw =
+        localStorage.getItem(
+          RANKING_CACHE_STORAGE_KEY
+        );
+
+      if (!raw) {
+        return null;
+      }
+
+      const cache =
+        JSON.parse(raw);
+
+      if (
+        cache?.weekId !==
+          getCurrentWeekId() ||
+        !Array.isArray(
+          cache.rankings
+        )
+      ) {
+        localStorage.removeItem(
+          RANKING_CACHE_STORAGE_KEY
+        );
+
+        return null;
+      }
+
+      return cache.rankings;
+    } catch (error) {
+      console.warn(
+        "랭킹 캐시 불러오기 실패:",
+        error
+      );
+
+      return null;
+    }
+  }
+
+  function applyRankingData(
+    rankings,
+    resetPage = true
+  ) {
+    weeklyRankingItems =
+      rankings.map(
+        (item, index) => ({
+          ...item,
+          rank:
+            Number(item.rank) > 0
+              ? Number(
+                  item.rank
+                )
+              : index + 1
+        })
+      );
+
+    if (resetPage) {
+      rankingCurrentPage = 1;
+    }
+
+    if (
+      weeklyRankingItems.length === 0
+    ) {
+      ui.rankingList.innerHTML =
+        '<li class="ranking-empty">이번 주에 등록된 점수가 없습니다.</li>';
+
+      if (ui.rankingPagination) {
+        ui.rankingPagination.hidden =
+          true;
+      }
+
+      updateMyRankingDisplay();
+      return;
+    }
+
+    renderRankingPage();
+  }
+
+  async function renderWeeklyRanking(
+    resetPage = true
+  ) {
+    ui.rankingWeek.textContent =
+      getCurrentWeekRange();
 
     if (!isFirebaseConfigured()) {
+      weeklyRankingItems = [];
+
       ui.rankingList.innerHTML =
         '<li class="ranking-empty">firebase-config.js에 프로젝트 설정값을 입력해 주세요.</li>';
+
+      if (ui.myRankingText) {
+        ui.myRankingText.textContent =
+          "내 랭킹 확인 불가";
+      }
+
+      if (ui.rankingPagination) {
+        ui.rankingPagination.hidden =
+          true;
+      }
+
       return;
     }
 
     ui.rankingList.innerHTML =
       '<li class="ranking-empty">랭킹을 불러오는 중입니다...</li>';
 
+    if (ui.myRankingText) {
+      ui.myRankingText.textContent =
+        "내 랭킹 확인 중";
+    }
+
+    if (ui.rankingPagination) {
+      ui.rankingPagination.hidden =
+        true;
+    }
+
     try {
-      const result = await getWeeklyRanking(20);
-      ui.rankingWeek.textContent = getCurrentWeekRange();
+      const result =
+        await getWeeklyRanking(
+          RANKING_FETCH_LIMIT
+        );
 
-      if (result.rankings.length === 0) {
-        ui.rankingList.innerHTML =
-          '<li class="ranking-empty">이번 주에 등록된 점수가 없습니다.</li>';
-        return;
-      }
+      ui.rankingWeek.textContent =
+        getCurrentWeekRange();
 
-      ui.rankingList.replaceChildren(
-        ...result.rankings.map(item => {
-          const row = document.createElement("li");
-          row.className = "ranking-item";
+      const rankings =
+        Array.isArray(
+          result?.rankings
+        )
+          ? result.rankings
+          : [];
 
-          const rank = document.createElement("span");
-          rank.className = "ranking-rank";
-          rank.textContent = `${item.rank}위`;
+      saveRankingCache(
+        rankings
+      );
 
-          const player = document.createElement("span");
-          player.className = "ranking-name";
-          player.textContent = item.nickname;
-
-          const resultBox =
-            document.createElement("span");
-
-          resultBox.className =
-            "ranking-result";
-
-          const scoreText =
-            document.createElement("strong");
-
-          scoreText.className =
-            "ranking-score";
-
-          scoreText.textContent =
-            `${item.score.toLocaleString()}점`;
-
-          const comboText =
-            document.createElement("span");
-
-          comboText.className =
-            "ranking-combo";
-
-          comboText.textContent =
-            `최고 ${item.bestCombo ?? 0}콤보`;
-
-          resultBox.append(
-            scoreText,
-            comboText
-          );
-
-          row.append(
-            rank,
-            player,
-            resultBox
-          );
-          return row;
-        })
+      applyRankingData(
+        rankings,
+        resetPage
       );
     } catch (error) {
-      console.error("랭킹 조회 실패:", error);
-      ui.rankingList.innerHTML =
-        '<li class="ranking-empty">랭킹을 불러오지 못했습니다.</li>';
+      console.error(
+        "랭킹 조회 실패:",
+        error
+      );
+
+      const cachedRankings =
+        readRankingCache();
+
+      if (cachedRankings) {
+        applyRankingData(
+          cachedRankings,
+          resetPage
+        );
+
+        ui.rankingWeek.textContent =
+          `${getCurrentWeekRange()} · 저장된 랭킹`;
+      } else {
+        weeklyRankingItems = [];
+
+        ui.rankingList.innerHTML =
+          '<li class="ranking-empty">랭킹을 불러오지 못했습니다.</li>';
+
+        if (ui.myRankingText) {
+          ui.myRankingText.textContent =
+            "내 랭킹 확인 실패";
+        }
+
+        if (ui.rankingPagination) {
+          ui.rankingPagination.hidden =
+            true;
+        }
+      }
     }
   }
 
@@ -5556,6 +6073,48 @@ import {
     handleRankingRefresh
   );
 
+  if (ui.rankingPrevButton) {
+    ui.rankingPrevButton.addEventListener(
+      "click",
+      () => {
+        setRankingPage(
+          rankingCurrentPage - 1
+        );
+      }
+    );
+  }
+
+  if (ui.rankingNextButton) {
+    ui.rankingNextButton.addEventListener(
+      "click",
+      () => {
+        setRankingPage(
+          rankingCurrentPage + 1
+        );
+      }
+    );
+  }
+
+  if (ui.rankingPageNumbers) {
+    ui.rankingPageNumbers.addEventListener(
+      "click",
+      event => {
+        const button =
+          event.target.closest(
+            "[data-page]"
+          );
+
+        if (!button) {
+          return;
+        }
+
+        setRankingPage(
+          button.dataset.page
+        );
+      }
+    );
+  }
+
   ui.submitRankingButton.addEventListener(
     "click",
     submitGameResult
@@ -5652,17 +6211,29 @@ import {
   restoreRankingRefreshCooldown();
 
   /*
-  * 페이지를 새로고침했을 때 쿨타임이 남아 있다면
-  * Firebase에서 랭킹을 다시 불러오지 않는다.
-  */
+   * 새로고침 쿨타임이 남아 있을 때는
+   * Firebase에 다시 요청하지 않고 마지막 랭킹 캐시를 보여준다.
+   */
   if (
-    rankingRefreshRemainingSeconds() > 0
+    rankingRefreshRemainingSeconds() >
+    0
   ) {
     ui.rankingWeek.textContent =
       getCurrentWeekRange();
 
-    ui.rankingList.innerHTML =
-      '<li class="ranking-empty">새로고침 쿨타임이 끝나면 랭킹을 불러올 수 있습니다.</li>';
+    const cachedRankings =
+      readRankingCache();
+
+    if (cachedRankings) {
+      applyRankingData(
+        cachedRankings
+      );
+    } else {
+      ui.rankingList.innerHTML =
+        '<li class="ranking-empty">새로고침 쿨타임이 끝나면 랭킹을 불러올 수 있습니다.</li>';
+
+      updateMyRankingDisplay();
+    }
   } else {
     renderWeeklyRanking();
   }
