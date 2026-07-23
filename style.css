@@ -48,6 +48,7 @@ button, canvas { -webkit-tap-highlight-color: transparent; }
 .canvas-wrap { overflow: hidden; border: 1px solid var(--border); border-radius: 16px; background: var(--panel); margin-bottom: 10px; }
 canvas { display: block; width: 100%; height: auto; cursor: crosshair; touch-action: none; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; -webkit-user-drag: none; }
 canvas.charging { cursor: grabbing; }
+canvas.game-over { cursor: pointer; }
 .power-area { flex: 1; min-width: 220px; }
 .power-label { display: flex; justify-content: space-between; gap: 12px; }
 .control-row { align-items: flex-end; }

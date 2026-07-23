@@ -155,7 +155,8 @@ import {
     "rainbow",
     "ice",
     "cloud",
-    "blackHole"
+    "blackHole",
+    "missile"
   ];
 
   // 얼음 폭발 후 미끄러운 상태가 유지되는 턴 수
@@ -169,10 +170,67 @@ import {
   const BLACK_HOLE_FORCE_PER_BALL = 2.5;
 
   /*
+   * 블랙홀공은 다른 공과 충돌하지 않고 관통한다.
+   * 충분히 느려진 상태가 연속으로 유지되면 그 자리에서 흡수를 시작한다.
+   */
+  const BLACK_HOLE_STOP_SPEED = 0.06;
+  const BLACK_HOLE_REQUIRED_STOP_FRAMES = 8;
+
+  /*
    * 특수공 연출 시간
    */
   const BLACK_HOLE_EFFECT_DURATION = 0.82;
   const RAINBOW_EFFECT_DURATION = 0.62;
+
+  /*
+   * 미사일공 전용 이동 설정
+   *
+   * 미사일공은 사용자가 선택한 발사 힘을 최초 기준 속도로 사용한다.
+   * 현재 속도에 목표 방향 가속도를 더해 관성을 유지하므로,
+   * 반대편 공을 노릴 때는 드리프트하듯 크게 미끄러지며 회전한다.
+   * 공을 터뜨릴 때마다 최초 발사 힘을 기준으로 속도가 감소하고,
+   * 최대 폭발 횟수에 도달하면 즉시 사라진다.
+   */
+  const MISSILE_AIR_FRICTION = 0;
+  const MISSILE_RESTITUTION = 1;
+
+  // 이 횟수만큼 공을 터뜨리면 미사일공이 사라진다.
+  const MISSILE_MAX_HITS = 12;
+
+  // 목표 공 방향으로 매초 더해지는 가속도다.
+  // 높을수록 빠르게 방향을 바꾸고, 낮을수록 드리프트 반경이 커진다.
+  const MISSILE_STEERING_ACCELERATION = 18;
+
+  // 목표 속도를 넘었을 때만 적용되는 공기 저항이다.
+  // 평소에는 속도를 강제로 고정하지 않아 가속과 감속이 자연스럽게 보인다.
+  const MISSILE_OVERSPEED_DRAG = 4.2;
+
+  // 가속 중 기준 속도보다 어느 정도까지 빨라질 수 있는지 정한다.
+  const MISSILE_MAX_SPEED_MULTIPLIER = 1.8;
+
+  // 공을 터뜨린 순간 충돌 충격으로 현재 속도를 조금 줄인다.
+  const MISSILE_HIT_SPEED_RETENTION = 0.9;
+
+  // 이 시간 동안 공을 하나도 터뜨리지 못하면 미사일공이 사라진다.
+  const MISSILE_NO_HIT_TIMEOUT_MS = 3000;
+
+  // 충돌 횟수에 따른 성능 감소 곡선이다.
+  // 값이 높을수록 후반 가속도와 최대 속도가 더 빠르게 줄어든다.
+  const MISSILE_SPEED_CURVE = 0.65;
+
+  // 여러 번 명중해도 유도력이 완전히 사라지지 않도록 하는 최저 비율이다.
+  const MISSILE_MIN_ACCELERATION_MULTIPLIER = 0.16;
+
+  // 여러 번 명중한 뒤 적용되는 최대 속도의 최저 비율이다.
+  const MISSILE_MIN_MAX_SPEED_MULTIPLIER = 0;
+
+  // 미사일 전용 충돌 이펙트가 유지되는 시간이다.
+  const MISSILE_IMPACT_EFFECT_DURATION = 0.52;
+
+  // 미사일 폭발은 일반 폭발보다 살짝 크고 강하다.
+  const MISSILE_EXPLOSION_STRENGTH = 1.45;
+  const MISSILE_BLAST_RADIUS_MULTIPLIER = 1.3;
+  const MISSILE_BLAST_FORCE_MULTIPLIER = 1.15;
 
   /*
    * 저속 상태에서 공끼리 겹치거나 붙는 현상 방지 설정
@@ -250,8 +308,9 @@ import {
     blue: "#2878d0",
     rainbow: "#d86cff",
     ice: "#73d8ff",
-    cloud: "#d9e2ec",
-    blackHole: "#6d4aff"
+    cloud: "#8e8e8e",
+    blackHole: "#6d4aff",
+    missile: "#ffffff"
   };
 
   /* =========================================================
@@ -310,6 +369,7 @@ import {
    */
   let rainbowEffects = [];
   let blackHoleEffects = [];
+  let missileImpactEffects = [];
 
   let aimAngle = 0;
   let charging = false;
@@ -470,7 +530,8 @@ import {
       rainbow: "🌈",
       ice: "❄",
       cloud: "☁",
-      blackHole: "🌀"
+      blackHole: "🌀",
+      missile: "🚀"
     };
 
     return symbols[type] || "?";
@@ -481,7 +542,8 @@ import {
       rainbow: "무지개공",
       ice: "얼음 폭발공",
       cloud: "구름공",
-      blackHole: "블랙홀공"
+      blackHole: "블랙홀공",
+      missile: "미사일공"
     };
 
     return names[type] || "특수공";
@@ -499,7 +561,10 @@ import {
         "공을 관통하면서 닿은 일반 숫자 공을 모두 4로 바꿉니다. 벽에 한 번 튕긴 뒤 마지막에 사라질 때 폭발합니다.",
 
       blackHole:
-        "충돌 지점 반경의 공을 먹습니다. 먹은 공은 모두 콤보가 되고, 먹은 개수에 비례해 폭발 범위와 힘이 커집니다."
+        "다른 공을 관통해 이동하고, 마지막으로 멈춘 자리에서 주변 공을 빨아들입니다. 먹은 공은 모두 콤보가 되고, 먹은 개수에 비례해 폭발 범위와 힘이 커집니다.",
+
+      missile:
+        "흰색 미사일공입니다. 사용자가 맞춘 발사 힘으로 출발해 가장 가까운 공 쪽으로 드리프트하듯 휘어집니다. 숫자나 색과 관계없이 닿은 공을 더 크게 폭발시키며, 공을 터뜨릴 때마다 점점 느려지고 15개를 터뜨리면 사라집니다."
     };
 
     return descriptions[type] || "";
@@ -527,8 +592,13 @@ import {
       ],
 
       blackHole: [
-        "공을 흡수한 만큼",
-        "강하게 폭발합니다."
+        "공을 관통한 뒤 멈춘 자리에서",
+        "주변 공을 흡수합니다."
+      ],
+
+      missile: [
+        "가까운 공을 강하게 추적하며",
+        "15개를 터뜨리면 사라집니다."
       ]
     };
 
@@ -598,7 +668,10 @@ import {
   }
 
   function shotTextColor(value) {
-    if (value === "cloud") {
+    if (
+      value === "cloud" ||
+      value === "missile"
+    ) {
       return "#202936";
     }
 
@@ -885,22 +958,36 @@ import {
     isBlack = false,
     specialType = null
   ) {
+    const isMissile =
+      specialType === "missile";
+
+    const isBlackHole =
+      specialType === "blackHole";
+
     const body = Bodies.circle(x, y, BALL_RADIUS, {
-      restitution: 0.96,
+      restitution:
+        isMissile
+          ? MISSILE_RESTITUTION
+          : 0.96,
       friction: 0,
       frictionAir:
-        iceTurnsRemaining > 0
-          ? ICE_AIR_FRICTION
-          : NORMAL_AIR_FRICTION,
+        isMissile
+          ? MISSILE_AIR_FRICTION
+          : iceTurnsRemaining > 0
+            ? ICE_AIR_FRICTION
+            : NORMAL_AIR_FRICTION,
       isSensor: specialType === "cloud",
       label: specialType ? `special-${specialType}` : "ball",
       collisionFilter: {
         category:
           COLLISION_CATEGORY.BALL,
         mask:
-          COLLISION_CATEGORY.BALL |
-          COLLISION_CATEGORY.FIELD_WALL |
-          COLLISION_CATEGORY.FLOOR_WALL
+          isBlackHole
+            ? COLLISION_CATEGORY.FIELD_WALL |
+              COLLISION_CATEGORY.FLOOR_WALL
+            : COLLISION_CATEGORY.BALL |
+              COLLISION_CATEGORY.FIELD_WALL |
+              COLLISION_CATEGORY.FLOOR_WALL
       }
     });
 
@@ -925,7 +1012,34 @@ import {
        */
       hasEnteredField: !isShot,
       launchedAt: isShot ? performance.now() : 0,
-      floorPassUntil: 0
+      floorPassUntil: 0,
+
+      // 블랙홀공 전용 정지 판정 상태
+      blackHoleStopFrames: 0,
+      blackHoleActivated: false,
+
+      // 미사일공 전용 상태
+      missileHits: 0,
+      missileBaseSpeed:
+        isMissile
+          ? Math.hypot(
+              velocityX,
+              velocityY
+            )
+          : 0,
+      missileTargetSpeed:
+        isMissile
+          ? Math.hypot(
+              velocityX,
+              velocityY
+            )
+          : 0,
+      missileTargetBodyId: null,
+      missileFinished: false,
+      missileLastHitAt:
+        isMissile
+          ? performance.now()
+          : 0
     };
 
     balls.push(ball);
@@ -1310,9 +1424,23 @@ import {
         ? saved.turn
         : 0;
 
-    queue = [...saved.queue];
+    /*
+     * 이전 버전에서 저장된 조커공·부메랑공 값은
+     * 새 미사일공 타입으로 자동 변환한다.
+     */
+    queue = saved.queue.map(
+      value =>
+        value === "joker" ||
+        value === "boomerang"
+          ? "missile"
+          : value
+    );
+
     currentNumber =
-      saved.currentNumber ?? 1;
+      saved.currentNumber === "joker" ||
+      saved.currentNumber === "boomerang"
+        ? "missile"
+        : saved.currentNumber ?? 1;
 
     overload =
       Boolean(saved.overload);
@@ -1419,6 +1547,7 @@ import {
     floatingTexts = [];
     rainbowEffects = [];
     blackHoleEffects = [];
+    missileImpactEffects = [];
 
     aimAngle = 0;
 
@@ -1431,7 +1560,10 @@ import {
     rankingSubmitting = false;
 
     closeNicknameModal();
-    canvas.classList.remove("charging");
+    canvas.classList.remove(
+      "charging",
+      "game-over"
+    );
 
     createWalls();
     bindCollisionEvents();
@@ -1549,7 +1681,8 @@ import {
       ice: { frequency: 155, duration: 0.24, wave: "triangle" },
       cloud: { frequency: 82, duration: 0.27, wave: "sine" },
       blackHole: { frequency: 62, duration: 0.38, wave: "sawtooth" },
-      rainbow: { frequency: 230, duration: 0.13, wave: "triangle" }
+      rainbow: { frequency: 230, duration: 0.13, wave: "triangle" },
+      missile: { frequency: 128, duration: 0.25, wave: "sawtooth" }
     };
 
     const setting = typeSettings[soundType] || typeSettings.normal;
@@ -1727,6 +1860,218 @@ import {
     }
   }
 
+  /**
+   * 일반 공의 둥근 폭발과 구분되는 미사일 전용 충돌 연출을 만든다.
+   * 진행 방향을 따라 뻗는 화염과 방사형 파편, 주황색 충격파를 사용한다.
+   */
+  function createMissileImpact(
+    x,
+    y,
+    gained,
+    velocityX,
+    velocityY,
+    strength = 1
+  ) {
+    playExplosionSound(
+      combo,
+      strength * 1.18,
+      "missile"
+    );
+
+    // 일반 폭발보다 더 강한 순간 섬광과 화면 흔들림을 준다.
+    flash = Math.max(
+      flash,
+      0.48 * strength
+    );
+
+    shake = Math.max(
+      shake,
+      13 * strength
+    );
+
+    const safeVelocityX =
+      Math.abs(velocityX) +
+        Math.abs(velocityY) <
+      0.01
+        ? 1
+        : velocityX;
+
+    const impactAngle = Math.atan2(
+      velocityY,
+      safeVelocityX
+    );
+
+    /*
+     * 길쭉한 불꽃 파편이다.
+     * 일부는 미사일이 날아온 반대쪽으로 집중되고,
+     * 일부는 충돌 지점에서 방사형으로 흩어진다.
+     */
+    const shards = [];
+    const shardCount = Math.min(
+      34,
+      22 + Math.round(strength * 8)
+    );
+
+    for (let i = 0; i < shardCount; i++) {
+      const backwardFocused =
+        Math.random() < 0.62;
+
+      const angle = backwardFocused
+        ? impactAngle +
+          Math.PI +
+          (Math.random() - 0.5) *
+            Math.PI *
+            1.25
+        : Math.random() * Math.PI * 2;
+
+      shards.push({
+        angle,
+        distance:
+          30 + Math.random() * 70,
+        length:
+          13 + Math.random() * 28,
+        width:
+          1.5 + Math.random() * 3.2,
+        spin:
+          (Math.random() - 0.5) * 2.8,
+        color:
+          Math.random() < 0.2
+            ? "#ffffff"
+            : Math.random() < 0.48
+              ? "#fff08a"
+              : Math.random() < 0.76
+                ? "#ffae32"
+                : "#ff4d24"
+      });
+    }
+
+    // 충돌 뒤에 잠깐 남는 연기 덩어리다.
+    const smoke = [];
+
+    for (let i = 0; i < 9; i++) {
+      smoke.push({
+        angle:
+          impactAngle +
+          Math.PI +
+          (Math.random() - 0.5) *
+            Math.PI *
+            1.15,
+        distance:
+          8 + Math.random() * 36,
+        radius:
+          8 + Math.random() * 15,
+        drift:
+          8 + Math.random() * 24,
+        alpha:
+          0.14 + Math.random() * 0.18
+      });
+    }
+
+    // 순간적으로 갈라지는 번개형 에너지 파편이다.
+    const arcs = [];
+
+    for (let i = 0; i < 7; i++) {
+      const offsets = [0];
+
+      for (let j = 1; j < 5; j++) {
+        offsets.push(
+          (Math.random() - 0.5) *
+            (14 + j * 4)
+        );
+      }
+
+      offsets.push(0);
+
+      arcs.push({
+        angle:
+          Math.random() * Math.PI * 2,
+        length:
+          48 + Math.random() * 58,
+        width:
+          1.2 + Math.random() * 2.1,
+        delay:
+          Math.random() * 0.09,
+        offsets
+      });
+    }
+
+    missileImpactEffects.push({
+      x,
+      y,
+      angle: impactAngle,
+      elapsed: 0,
+      duration:
+        MISSILE_IMPACT_EFFECT_DURATION,
+      strength,
+      rotation:
+        Math.random() * Math.PI * 2,
+      shards,
+      smoke,
+      arcs
+    });
+
+    // 작은 잔불이 충돌 지점에 잠시 남도록 일반 파티클도 추가한다.
+    const emberCount = Math.min(
+      30,
+      18 + Math.round(strength * 8)
+    );
+
+    for (let i = 0; i < emberCount; i++) {
+      const angle =
+        Math.random() * Math.PI * 2;
+
+      const speed =
+        (70 + Math.random() * 210) *
+        strength;
+
+      particles.push({
+        x,
+        y,
+        vx: Math.cos(angle) * speed,
+        vy: Math.sin(angle) * speed,
+        size:
+          2.5 + Math.random() * 4.5,
+        life:
+          0.48 + Math.random() * 0.38,
+        color:
+          Math.random() < 0.2
+            ? "#ffffff"
+            : Math.random() < 0.58
+              ? "#ffd84f"
+              : "#ff5b2e"
+      });
+    }
+
+    if (
+      floatingTexts.length <
+      MAX_FLOATING_TEXTS
+    ) {
+      floatingTexts.push({
+        x,
+        y: y - 18,
+        text: `MISSILE +${gained}`,
+        life: 1.0,
+        color: "#ffd75a",
+        combo: false
+      });
+    }
+
+    if (
+      combo >= 3 &&
+      floatingTexts.length <
+        MAX_FLOATING_TEXTS
+    ) {
+      floatingTexts.push({
+        x,
+        y: y + 24,
+        text: `${combo} COMBO!`,
+        life: 0.9,
+        color: "#ffffff",
+        combo: true
+      });
+    }
+  }
+
   function applyBlast(
     x,
     y,
@@ -1810,7 +2155,8 @@ import {
   function hasActiveSpecialEffect() {
     return (
       rainbowEffects.length > 0 ||
-      blackHoleEffects.length > 0
+      blackHoleEffects.length > 0 ||
+      missileImpactEffects.length > 0
     );
   }
 
@@ -2258,19 +2604,26 @@ import {
     });
   }
 
-  function triggerBlackHoleBall(
-    specialBall,
-    targetBall
-  ) {
-    if (!targetBall) {
-      return;
+  /**
+   * 블랙홀공이 마지막으로 멈춘 자기 위치를 중심으로 흡수를 시작한다.
+   * 공과 충돌한 위치는 사용하지 않는다.
+   */
+  function triggerBlackHoleBall(specialBall) {
+    if (
+      !specialBall ||
+      specialBall.blackHoleActivated ||
+      !ballByBodyId.has(specialBall.body.id)
+    ) {
+      return false;
     }
 
+    specialBall.blackHoleActivated = true;
+
     const x =
-      targetBall.body.position.x;
+      specialBall.body.position.x;
 
     const y =
-      targetBall.body.position.y;
+      specialBall.body.position.y;
 
     const radiusSquared =
       BLACK_HOLE_SUCTION_RADIUS *
@@ -2299,6 +2652,16 @@ import {
         );
       });
 
+    Body.setVelocity(specialBall.body, {
+      x: 0,
+      y: 0
+    });
+
+    Body.setAngularVelocity(
+      specialBall.body,
+      0
+    );
+
     removeSpecialShot(specialBall);
 
     startBlackHoleEffect(
@@ -2308,9 +2671,568 @@ import {
     );
 
     setStatus(
-      `블랙홀이 공 ${targets.length}개를 흡수합니다.`,
+      `블랙홀이 멈춘 자리에서 공 ${targets.length}개를 흡수합니다.`,
       "BLACK HOLE"
     );
+
+    return true;
+  }
+
+  /**
+   * 공을 관통하며 움직이던 블랙홀공이 완전히 멈췄는지 확인한다.
+   * 한 프레임만 느려진 경우에는 발동하지 않고, 연속 정지 프레임을 요구한다.
+   */
+  function activateStoppedBlackHoleBalls() {
+    const stopSpeedSquared =
+      BLACK_HOLE_STOP_SPEED *
+      BLACK_HOLE_STOP_SPEED;
+
+    const blackHoleBalls =
+      balls.filter(
+        ball =>
+          ball.specialType === "blackHole" &&
+          ball.isShot &&
+          ball.hasEnteredField &&
+          !ball.blackHoleActivated
+      );
+
+    let activated = false;
+
+    for (let i = 0; i < blackHoleBalls.length; i++) {
+      const blackHoleBall = blackHoleBalls[i];
+      const velocity = blackHoleBall.body.velocity;
+
+      const speedSquared =
+        velocity.x * velocity.x +
+        velocity.y * velocity.y;
+
+      if (speedSquared <= stopSpeedSquared) {
+        blackHoleBall.blackHoleStopFrames++;
+      } else {
+        blackHoleBall.blackHoleStopFrames = 0;
+      }
+
+      if (
+        blackHoleBall.blackHoleStopFrames >=
+        BLACK_HOLE_REQUIRED_STOP_FRAMES
+      ) {
+        activated =
+          triggerBlackHoleBall(blackHoleBall) ||
+          activated;
+      }
+    }
+
+    return activated;
+  }
+
+  /**
+   * 미사일공은 한 턴 동안 유지되며 충돌한 공을 조건 없이 폭발시킨다.
+   * 일반 숫자 공뿐 아니라 검은 구슬도 제거할 수 있다.
+   */
+  function missileRemainingRatio(hitCount) {
+    return Math.max(
+      0,
+      (MISSILE_MAX_HITS - hitCount) /
+        MISSILE_MAX_HITS
+    );
+  }
+
+  function missileBaseSpeed(missileBall) {
+    return Math.max(
+      MIN_POWER,
+      missileBall.missileBaseSpeed ||
+        Math.hypot(
+          missileBall.body.velocity.x,
+          missileBall.body.velocity.y
+        ) ||
+        MIN_POWER
+    );
+  }
+
+  /**
+   * 명중 횟수가 늘수록 미사일의 기준 속도가 감소한다.
+   */
+  function missileSpeedAfterHits(
+    missileBall,
+    hitCount
+  ) {
+    const remainingRatio =
+      missileRemainingRatio(hitCount);
+
+    return missileBaseSpeed(missileBall) *
+      Math.pow(
+        remainingRatio,
+        MISSILE_SPEED_CURVE
+      );
+  }
+
+  /**
+   * 명중할수록 목표 방향으로 당기는 가속도를 단계적으로 낮춘다.
+   */
+  function missileAccelerationAfterHits(hitCount) {
+    const performanceRatio = Math.max(
+      MISSILE_MIN_ACCELERATION_MULTIPLIER,
+      Math.pow(
+        missileRemainingRatio(hitCount),
+        MISSILE_SPEED_CURVE
+      )
+    );
+
+    return (
+      MISSILE_STEERING_ACCELERATION *
+      performanceRatio
+    );
+  }
+
+  /**
+   * 최초 발사 속도를 기준으로 현재 단계의 최대 속도 상한을 계산한다.
+   * 명중할수록 상한이 낮아져 더 이상 초반처럼 빠르게 가속하지 못한다.
+   */
+  function missileMaximumSpeedAfterHits(
+    missileBall,
+    hitCount
+  ) {
+    const performanceRatio = Math.max(
+      MISSILE_MIN_MAX_SPEED_MULTIPLIER,
+      Math.pow(
+        missileRemainingRatio(hitCount),
+        MISSILE_SPEED_CURVE
+      )
+    );
+
+    return Math.max(
+      0,
+      missileBaseSpeed(missileBall) *
+        MISSILE_MAX_SPEED_MULTIPLIER *
+        performanceRatio
+    );
+  }
+
+  /**
+   * 미사일공은 한 턴 동안 유지되며 충돌한 공을 조건 없이 폭발시킨다.
+   * 공 하나를 터뜨릴 때마다 목표 속도가 낮아지고,
+   * 설정된 충돌 횟수에 도달하면 즉시 사라진다.
+   */
+  function triggerMissileBall(
+    missileBall,
+    targetBall
+  ) {
+    if (
+      !missileBall ||
+      !targetBall ||
+      missileBall === targetBall ||
+      missileBall.missileFinished ||
+      !ballByBodyId.has(
+        missileBall.body.id
+      ) ||
+      !ballByBodyId.has(
+        targetBall.body.id
+      )
+    ) {
+      return;
+    }
+
+    const x =
+      targetBall.body.position.x;
+
+    const y =
+      targetBall.body.position.y;
+
+    removeBall(targetBall);
+
+    // 방금 제거한 목표를 놓고 다음 공을 다시 탐색한다.
+    missileBall.missileTargetBodyId = null;
+    missileBall.missileHits++;
+    missileBall.missileLastHitAt = performance.now();
+
+    const gained =
+      addScore();
+
+    createMissileImpact(
+      x,
+      y,
+      gained,
+      missileBall.body.velocity.x,
+      missileBall.body.velocity.y,
+      MISSILE_EXPLOSION_STRENGTH
+    );
+
+    applyBlast(
+      x,
+      y,
+      [missileBall],
+      BLAST_RADIUS *
+        MISSILE_BLAST_RADIUS_MULTIPLIER,
+      BLAST_FORCE *
+        MISSILE_BLAST_FORCE_MULTIPLIER
+    );
+
+    const nextSpeed =
+      missileSpeedAfterHits(
+        missileBall,
+        missileBall.missileHits
+      );
+
+    missileBall.missileTargetSpeed =
+      nextSpeed;
+
+    if (
+      missileBall.missileHits >=
+        MISSILE_MAX_HITS ||
+      nextSpeed <= 0.01
+    ) {
+      const explodedCount =
+        missileBall.missileHits;
+
+      /*
+       * 최대 폭발 횟수에 도달하면
+       * 미사일공을 필드에서 즉시 제거한다.
+       */
+      removeSpecialShot(
+        missileBall
+      );
+
+      setStatus(
+        `미사일공 소멸 · ${explodedCount}개 폭발!`,
+        "MISSILE MAX"
+      );
+
+      return;
+    }
+
+    /*
+     * 충돌 직후 진행 방향을 새 목표 쪽으로 강제로 꺾지 않는다.
+     * 현재 관성을 유지한 채 충돌 충격만큼 속도를 조금 잃고,
+     * 이후 프레임에서 목표 방향 가속도를 받아 드리프트한다.
+     */
+    const velocity =
+      missileBall.body.velocity;
+
+    Body.setVelocity(
+      missileBall.body,
+      {
+        x:
+          velocity.x *
+          MISSILE_HIT_SPEED_RETENTION,
+
+        y:
+          velocity.y *
+          MISSILE_HIT_SPEED_RETENTION
+      }
+    );
+
+    const nextAcceleration =
+      missileAccelerationAfterHits(
+        missileBall.missileHits
+      );
+
+    const nextMaximumSpeed =
+      missileMaximumSpeedAfterHits(
+        missileBall,
+        missileBall.missileHits
+      );
+
+    setStatus(
+      `미사일공 연속 폭발 · ${missileBall.missileHits}/${MISSILE_MAX_HITS} · 가속 ${nextAcceleration.toFixed(1)} · 최고속도 ${nextMaximumSpeed.toFixed(1)}`,
+      "MISSILE"
+    );
+  }
+
+  function isValidMissileTarget(
+    missileBall,
+    target
+  ) {
+    return Boolean(
+      target &&
+      target !== missileBall &&
+      !target.specialType &&
+      !target.effectLocked &&
+      ballByBodyId.has(
+        target.body.id
+      ) &&
+      target.body.position.y < FLOOR
+    );
+  }
+
+  function findMissileTarget(missileBall) {
+    const lockedTarget =
+      missileBall.missileTargetBodyId
+        ? ballByBodyId.get(
+            missileBall.missileTargetBodyId
+          )
+        : null;
+
+    if (
+      isValidMissileTarget(
+        missileBall,
+        lockedTarget
+      )
+    ) {
+      return lockedTarget;
+    }
+
+    let nearestTarget = null;
+    let nearestDistanceSquared =
+      Infinity;
+
+    for (let i = 0; i < balls.length; i++) {
+      const target = balls[i];
+
+      if (
+        !isValidMissileTarget(
+          missileBall,
+          target
+        )
+      ) {
+        continue;
+      }
+
+      const dx =
+        target.body.position.x -
+        missileBall.body.position.x;
+
+      const dy =
+        target.body.position.y -
+        missileBall.body.position.y;
+
+      const distanceSquared =
+        dx * dx + dy * dy;
+
+      if (
+        distanceSquared <
+        nearestDistanceSquared
+      ) {
+        nearestDistanceSquared =
+          distanceSquared;
+
+        nearestTarget = target;
+      }
+    }
+
+    missileBall.missileTargetBodyId =
+      nearestTarget
+        ? nearestTarget.body.id
+        : null;
+
+    return nearestTarget;
+  }
+
+  /**
+   * 미사일공에 목표 방향 가속도를 적용한다.
+   *
+   * 속도 방향을 목표 방향으로 바로 섞지 않기 때문에,
+   * 목표가 뒤쪽에 있으면 기존 방향으로 계속 미끄러진다.
+   * 목표 방향의 가속도가 기존 속도를 상쇄한 뒤 반대 방향으로
+   * 다시 속도가 붙으면서 드리프트 같은 넓은 곡선을 만든다.
+   */
+  function applyMissileGuidance(deltaTime, now) {
+    for (let i = 0; i < balls.length; i++) {
+      const missileBall = balls[i];
+
+      if (
+        missileBall.specialType !== "missile" ||
+        missileBall.effectLocked ||
+        missileBall.missileFinished
+      ) {
+        continue;
+      }
+
+      const lastHitAt =
+        missileBall.missileLastHitAt ||
+        missileBall.launchedAt ||
+        now;
+
+      if (
+        now - lastHitAt >=
+        MISSILE_NO_HIT_TIMEOUT_MS
+      ) {
+        const explodedCount =
+          missileBall.missileHits;
+
+        removeSpecialShot(
+          missileBall
+        );
+
+        setStatus(
+          explodedCount > 0
+            ? `미사일공 소멸 · ${explodedCount}개 폭발 후 목표를 놓쳤습니다.`
+            : "미사일공 소멸 · 오랫동안 공을 맞히지 못했습니다.",
+          "MISSILE END"
+        );
+
+        i--;
+        continue;
+      }
+
+      /*
+       * 필드에 아직 들어오지 못했더라도 위의 미명중 타이머는 계속 흐른다.
+       * 따라서 발사구역 뒤쪽으로 쏘거나 입구를 지나지 못한 미사일도
+       * MISSILE_NO_HIT_TIMEOUT_MS 후 반드시 제거된다.
+       */
+      if (!missileBall.hasEnteredField) {
+        continue;
+      }
+
+      const target =
+        findMissileTarget(
+          missileBall
+        );
+
+      if (!target) {
+        /*
+         * 목표가 없다고 미사일을 종료 상태로 만들면 타임아웃 검사에서
+         * 영구 제외될 수 있다. 현재 관성은 유지하고, 미명중 제한 시간이
+         * 지나면 위의 공통 소멸 처리에서 제거한다.
+         */
+        missileBall.missileTargetBodyId = null;
+        continue;
+      }
+
+      const targetSpeed =
+        Math.max(
+          0,
+          missileBall.missileTargetSpeed ||
+            missileBall.missileBaseSpeed ||
+            Math.hypot(
+              missileBall.body.velocity.x,
+              missileBall.body.velocity.y
+            )
+        );
+
+      if (targetSpeed <= 0.01) {
+        missileBall.missileFinished = true;
+
+        Body.setVelocity(
+          missileBall.body,
+          {
+            x: 0,
+            y: 0
+          }
+        );
+
+        continue;
+      }
+
+      const body =
+        missileBall.body;
+
+      const targetX =
+        target.body.position.x -
+        body.position.x;
+
+      const targetY =
+        target.body.position.y -
+        body.position.y;
+
+      const targetLength =
+        Math.hypot(
+          targetX,
+          targetY
+        ) || 1;
+
+      const steeringAcceleration =
+        missileAccelerationAfterHits(
+          missileBall.missileHits
+        );
+
+      const accelerationX =
+        targetX /
+        targetLength *
+        steeringAcceleration;
+
+      const accelerationY =
+        targetY /
+        targetLength *
+        steeringAcceleration;
+
+      /*
+       * 현재 속도에 가속도를 누적한다.
+       * 목표가 반대편이면 가속도가 먼저 현재 속도를 줄이고,
+       * 이후 반대 방향으로 다시 가속한다.
+       */
+      let nextVelocityX =
+        body.velocity.x +
+        accelerationX *
+        deltaTime;
+
+      let nextVelocityY =
+        body.velocity.y +
+        accelerationY *
+        deltaTime;
+
+      let nextSpeed =
+        Math.hypot(
+          nextVelocityX,
+          nextVelocityY
+        );
+
+      const maximumSpeed =
+        missileMaximumSpeedAfterHits(
+          missileBall,
+          missileBall.missileHits
+        );
+
+      /*
+       * 기준 속도 아래에서는 저항을 넣지 않는다.
+       * 기준 속도를 넘었을 때만 부드럽게 감속하여
+       * 무한정 빨라지는 것만 방지한다.
+       */
+      if (nextSpeed > maximumSpeed) {
+        const drag =
+          Math.exp(
+            -MISSILE_OVERSPEED_DRAG *
+            deltaTime
+          );
+
+        const draggedSpeed =
+          maximumSpeed +
+          (nextSpeed - maximumSpeed) *
+          drag;
+
+        const speedScale =
+          draggedSpeed /
+          nextSpeed;
+
+        nextVelocityX *=
+          speedScale;
+
+        nextVelocityY *=
+          speedScale;
+
+        nextSpeed =
+          draggedSpeed;
+      }
+
+      /*
+       * 거의 정지한 상태에서는 목표 방향으로 아주 약한 시동 속도를 준다.
+       * 최대 폭발 횟수에 도달한 공은 이미 제거되어 이 코드가 실행되지 않는다.
+       */
+      if (nextSpeed < 0.08) {
+        const restartSpeed =
+          Math.min(
+            0.35,
+            targetSpeed
+          );
+
+        nextVelocityX =
+          targetX /
+          targetLength *
+          restartSpeed;
+
+        nextVelocityY =
+          targetY /
+          targetLength *
+          restartSpeed;
+      }
+
+      Body.setVelocity(
+        body,
+        {
+          x: nextVelocityX,
+          y: nextVelocityY
+        }
+      );
+    }
   }
 
   function handleSpecialCollision(
@@ -2336,12 +3258,17 @@ import {
         break;
 
       case "blackHole":
-        if (otherBall?.isBlack) {
-          removeSpecialShot(specialBall);
-          break;
-        }
+        /*
+         * 블랙홀공은 공과 충돌하지 않고 관통한다.
+         * 벽 충돌 이벤트만 들어올 수 있으며, 흡수는 정지 판정에서 처리한다.
+         */
+        break;
 
-        triggerBlackHoleBall(specialBall, otherBall);
+      case "missile":
+        triggerMissileBall(
+          specialBall,
+          otherBall
+        );
         break;
     }
   }
@@ -2642,10 +3569,17 @@ import {
     ) {
       activeShotBall.hasEnteredField = true;
 
+      if (activeShotBall.specialType === "missile") {
+        activeShotBall.missileLastHitAt = now;
+      }
+
       activeShotBall.body.collisionFilter.mask =
-        COLLISION_CATEGORY.BALL |
-        COLLISION_CATEGORY.FIELD_WALL |
-        COLLISION_CATEGORY.FLOOR_WALL;
+        activeShotBall.specialType === "blackHole"
+          ? COLLISION_CATEGORY.FIELD_WALL |
+            COLLISION_CATEGORY.FLOOR_WALL
+          : COLLISION_CATEGORY.BALL |
+            COLLISION_CATEGORY.FIELD_WALL |
+            COLLISION_CATEGORY.FLOOR_WALL;
 
       closeLaunchGate();
       return false;
@@ -2684,12 +3618,18 @@ import {
      */
     openLaunchGate();
 
+    /*
+     * 미사일공도 일반 공과 동일하게 사용자가 맞춘 발사 힘을 사용한다.
+     * 이 속도가 이후 미사일 감속 곡선의 최초 기준 속도가 된다.
+     */
+    const launchSpeed = power;
+
     activeShotBall = addBall(
       SHOOT_X,
       LAUNCH_Y,
       specialType ? 0 : firedNumber,
-      Math.sin(aimAngle) * power,
-      -Math.cos(aimAngle) * power,
+      Math.sin(aimAngle) * launchSpeed,
+      -Math.cos(aimAngle) * launchSpeed,
       true,
       false,
       specialType
@@ -2700,8 +3640,10 @@ import {
      * 좌우·위·아래 캔버스 외곽벽과 다른 공에는 항상 충돌한다.
      */
     activeShotBall.body.collisionFilter.mask =
-      COLLISION_CATEGORY.BALL |
-      COLLISION_CATEGORY.FIELD_WALL;
+      specialType === "blackHole"
+        ? COLLISION_CATEGORY.FIELD_WALL
+        : COLLISION_CATEGORY.BALL |
+          COLLISION_CATEGORY.FIELD_WALL;
 
 
     // 발사 즉시 준비 공을 다음 숫자로 변경한다.
@@ -2750,6 +3692,25 @@ import {
       const ball = balls[i];
       const body = ball.body;
 
+      const activeMissile =
+        ball.specialType === "missile" &&
+        !ball.missileFinished;
+
+      const ballLowSpeedThreshold =
+        activeMissile
+          ? 0
+          : activeLowSpeedThreshold;
+
+      const ballDamping =
+        activeMissile
+          ? 1
+          : activeDamping;
+
+      const ballSnapStopSpeed =
+        activeMissile
+          ? 0
+          : activeSnapStopSpeed;
+
       const velocityX =
         body.velocity.x;
 
@@ -2779,8 +3740,8 @@ import {
       if (
         !touchingWall &&
         speedSquared <=
-          activeSnapStopSpeed *
-          activeSnapStopSpeed
+          ballSnapStopSpeed *
+          ballSnapStopSpeed
       ) {
         Body.setVelocity(body, {
           x: 0,
@@ -2797,8 +3758,8 @@ import {
 
       if (
         speedSquared <=
-          activeLowSpeedThreshold *
-          activeLowSpeedThreshold
+          ballLowSpeedThreshold *
+          ballLowSpeedThreshold
       ) {
         /*
         * 벽 근처에서는 감속을 훨씬 약하게 적용한다.
@@ -2806,10 +3767,10 @@ import {
         const damping =
           touchingWall
             ? Math.max(
-                activeDamping,
+                ballDamping,
                 0.96
               )
-            : activeDamping;
+            : ballDamping;
 
         Body.setVelocity(body, {
           x:
@@ -2851,7 +3812,8 @@ import {
 
       if (
         first.effectLocked ||
-        first.specialType === "cloud"
+        first.specialType === "cloud" ||
+        first.specialType === "blackHole"
       ) {
         continue;
       }
@@ -2865,7 +3827,8 @@ import {
 
         if (
           second.effectLocked ||
-          second.specialType === "cloud"
+          second.specialType === "cloud" ||
+          second.specialType === "blackHole"
         ) {
           continue;
         }
@@ -3951,6 +4914,10 @@ import {
       ) {
         gameOver = true;
 
+        canvas.classList.add(
+          "game-over"
+        );
+
         setStatus(
           `게임 오버 · ${score.toLocaleString()}점`,
           "GAME OVER"
@@ -4123,9 +5090,22 @@ import {
   function beginCharge(event) {
     ensureAudioContext();
 
+    /*
+     * 게임오버 상태에서 게임 화면을 누르면
+     * 저장 데이터를 지우고 새 게임을 시작한다.
+     */
+    if (gameOver) {
+      event.preventDefault();
+
+      clearSavedGameState();
+      closeNicknameModal();
+      resetGame(false);
+
+      return;
+    }
+
     if (
       moving ||
-      gameOver ||
       charging
     ) {
       return;
@@ -4440,7 +5420,7 @@ import {
       );
 
       ctx.strokeStyle =
-        numberColor(
+        shotColor(
           currentNumber
         );
 
@@ -4820,6 +5800,28 @@ import {
     }
 
     for (
+      let i =
+        missileImpactEffects.length - 1;
+      i >= 0;
+      i--
+    ) {
+      const effect =
+        missileImpactEffects[i];
+
+      effect.elapsed += deltaTime;
+
+      if (
+        effect.elapsed >=
+        effect.duration
+      ) {
+        missileImpactEffects.splice(
+          i,
+          1
+        );
+      }
+    }
+
+    for (
       let i = particles.length - 1;
       i >= 0;
       i--
@@ -5007,6 +6009,509 @@ import {
       ctx.lineWidth = 4;
       ctx.strokeStyle = ring.color;
       ctx.stroke();
+    }
+
+    /*
+     * 미사일 충돌 전용 연출이다.
+     * 일반 공의 둥근 폭발과 달리 이중 충격파, 회전 링,
+     * 별 모양 섬광, 번개 파편, 화염과 연기가 한꺼번에 나타난다.
+     */
+    for (
+      let i = 0;
+      i < missileImpactEffects.length;
+      i++
+    ) {
+      const effect =
+        missileImpactEffects[i];
+
+      const progress = Math.min(
+        1,
+        effect.elapsed /
+          effect.duration
+      );
+
+      const fade =
+        Math.max(0, 1 - progress);
+
+      const burst =
+        Math.max(
+          0,
+          1 - progress / 0.32
+        );
+
+      const easeOut =
+        1 - Math.pow(1 - progress, 3);
+
+      ctx.save();
+      ctx.translate(
+        effect.x,
+        effect.y
+      );
+      ctx.globalCompositeOperation =
+        "lighter";
+
+      /* 충돌 지점을 넓게 밝히는 주황색 에너지 광원 */
+      const haloRadius =
+        (46 + easeOut * 92) *
+        effect.strength;
+
+      const haloGradient =
+        ctx.createRadialGradient(
+          0,
+          0,
+          2,
+          0,
+          0,
+          haloRadius
+        );
+
+      haloGradient.addColorStop(
+        0,
+        `rgba(255,255,255,${0.95 * burst})`
+      );
+      haloGradient.addColorStop(
+        0.18,
+        `rgba(255,235,120,${0.82 * fade})`
+      );
+      haloGradient.addColorStop(
+        0.48,
+        `rgba(255,104,34,${0.38 * fade})`
+      );
+      haloGradient.addColorStop(
+        1,
+        "rgba(255,38,20,0)"
+      );
+
+      ctx.fillStyle = haloGradient;
+      ctx.beginPath();
+      ctx.arc(
+        0,
+        0,
+        haloRadius,
+        0,
+        Math.PI * 2
+      );
+      ctx.fill();
+
+      /* 미사일 진행 반대 방향으로 길게 뻗는 추진 화염 */
+      ctx.save();
+      ctx.rotate(effect.angle);
+
+      const flameLength =
+        (62 + effect.strength * 26) *
+        (0.5 + fade * 0.85);
+
+      const flameWidth =
+        (18 + effect.strength * 9) *
+        (0.55 + burst * 0.65);
+
+      const flameGradient =
+        ctx.createLinearGradient(
+          10,
+          0,
+          -flameLength,
+          0
+        );
+
+      flameGradient.addColorStop(
+        0,
+        `rgba(255,255,255,${0.98 * fade})`
+      );
+      flameGradient.addColorStop(
+        0.18,
+        `rgba(255,244,118,${0.96 * fade})`
+      );
+      flameGradient.addColorStop(
+        0.48,
+        `rgba(255,135,35,${0.84 * fade})`
+      );
+      flameGradient.addColorStop(
+        0.78,
+        `rgba(255,52,27,${0.58 * fade})`
+      );
+      flameGradient.addColorStop(
+        1,
+        "rgba(255,20,10,0)"
+      );
+
+      ctx.fillStyle = flameGradient;
+      ctx.beginPath();
+      ctx.moveTo(12, 0);
+      ctx.quadraticCurveTo(
+        -flameLength * 0.32,
+        -flameWidth,
+        -flameLength,
+        0
+      );
+      ctx.quadraticCurveTo(
+        -flameLength * 0.32,
+        flameWidth,
+        12,
+        0
+      );
+      ctx.fill();
+      ctx.restore();
+
+      /* 순간적으로 튀어나오는 별 모양 섬광 */
+      ctx.save();
+      ctx.rotate(
+        effect.rotation +
+          progress * 1.8
+      );
+      ctx.globalAlpha =
+        0.95 * burst;
+      ctx.strokeStyle = "#fff7b0";
+      ctx.lineCap = "round";
+
+      const rayCount = 14;
+
+      for (let j = 0; j < rayCount; j++) {
+        const angle =
+          (Math.PI * 2 * j) /
+          rayCount;
+
+        const alternating =
+          j % 2 === 0 ? 1 : 0.58;
+
+        const inner =
+          9 + progress * 8;
+
+        const outer =
+          (42 + burst * 58) *
+          alternating *
+          effect.strength;
+
+        ctx.lineWidth =
+          j % 2 === 0 ? 4.2 : 2.2;
+        ctx.beginPath();
+        ctx.moveTo(
+          Math.cos(angle) * inner,
+          Math.sin(angle) * inner
+        );
+        ctx.lineTo(
+          Math.cos(angle) * outer,
+          Math.sin(angle) * outer
+        );
+        ctx.stroke();
+      }
+      ctx.restore();
+
+      /* 서로 다른 속도로 퍼지는 이중 충격파 */
+      const shockwaves = [
+        {
+          delay: 0,
+          size: 112,
+          width: 7,
+          alpha: 0.92,
+          color: "255,179,54"
+        },
+        {
+          delay: 0.13,
+          size: 156,
+          width: 4,
+          alpha: 0.68,
+          color: "255,78,37"
+        }
+      ];
+
+      for (
+        let j = 0;
+        j < shockwaves.length;
+        j++
+      ) {
+        const wave = shockwaves[j];
+        const waveProgress =
+          Math.max(
+            0,
+            Math.min(
+              1,
+              (progress - wave.delay) /
+                (1 - wave.delay)
+            )
+          );
+
+        if (waveProgress <= 0) {
+          continue;
+        }
+
+        ctx.globalAlpha =
+          wave.alpha *
+          (1 - waveProgress);
+        ctx.strokeStyle =
+          `rgba(${wave.color},1)`;
+        ctx.lineWidth =
+          Math.max(
+            1.2,
+            wave.width *
+              (1 - waveProgress * 0.72)
+          );
+        ctx.beginPath();
+        ctx.arc(
+          0,
+          0,
+          (18 +
+            wave.size *
+              waveProgress) *
+            effect.strength,
+          0,
+          Math.PI * 2
+        );
+        ctx.stroke();
+      }
+
+      /* 미사일 조준 장치처럼 회전하는 분할 링 */
+      ctx.save();
+      ctx.rotate(
+        effect.rotation +
+          effect.elapsed * 9
+      );
+      ctx.globalAlpha =
+        0.82 * fade;
+      ctx.strokeStyle = "#ffd34e";
+      ctx.lineWidth = 3.4;
+      ctx.setLineDash([14, 9]);
+      ctx.beginPath();
+      ctx.arc(
+        0,
+        0,
+        (31 + easeOut * 34) *
+          effect.strength,
+        0,
+        Math.PI * 2
+      );
+      ctx.stroke();
+      ctx.restore();
+
+      ctx.save();
+      ctx.rotate(
+        -effect.rotation -
+          effect.elapsed * 6
+      );
+      ctx.globalAlpha =
+        0.58 * fade;
+      ctx.strokeStyle = "#ff6238";
+      ctx.lineWidth = 2.4;
+      ctx.setLineDash([7, 13]);
+      ctx.beginPath();
+      ctx.arc(
+        0,
+        0,
+        (46 + easeOut * 45) *
+          effect.strength,
+        0,
+        Math.PI * 2
+      );
+      ctx.stroke();
+      ctx.restore();
+      ctx.setLineDash([]);
+
+      /* 짧게 번쩍이는 번개형 에너지 균열 */
+      for (
+        let j = 0;
+        j < effect.arcs.length;
+        j++
+      ) {
+        const arc = effect.arcs[j];
+        const arcProgress =
+          Math.max(
+            0,
+            progress - arc.delay
+          );
+
+        if (
+          arcProgress <= 0 ||
+          arcProgress > 0.48
+        ) {
+          continue;
+        }
+
+        const arcFade =
+          1 - arcProgress / 0.48;
+
+        const length =
+          arc.length *
+          (0.45 + arcProgress * 1.4) *
+          effect.strength;
+
+        const normalX =
+          Math.cos(
+            arc.angle + Math.PI / 2
+          );
+        const normalY =
+          Math.sin(
+            arc.angle + Math.PI / 2
+          );
+
+        ctx.globalAlpha =
+          0.9 * arcFade;
+        ctx.strokeStyle =
+          j % 2 === 0
+            ? "#ffffff"
+            : "#ffe25c";
+        ctx.lineWidth = arc.width;
+        ctx.beginPath();
+
+        for (
+          let k = 0;
+          k < arc.offsets.length;
+          k++
+        ) {
+          const ratio =
+            k /
+            (arc.offsets.length - 1);
+
+          const baseX =
+            Math.cos(arc.angle) *
+            length *
+            ratio;
+
+          const baseY =
+            Math.sin(arc.angle) *
+            length *
+            ratio;
+
+          const offset =
+            arc.offsets[k] *
+            arcFade;
+
+          const px =
+            baseX + normalX * offset;
+
+          const py =
+            baseY + normalY * offset;
+
+          if (k === 0) {
+            ctx.moveTo(px, py);
+          } else {
+            ctx.lineTo(px, py);
+          }
+        }
+
+        ctx.stroke();
+      }
+
+      /* 길게 날아가는 불꽃 파편 */
+      for (
+        let j = 0;
+        j < effect.shards.length;
+        j++
+      ) {
+        const shard =
+          effect.shards[j];
+
+        const shardAngle =
+          shard.angle +
+          shard.spin *
+            progress *
+            0.18;
+
+        const travel =
+          shard.distance *
+          (0.18 + easeOut * 1.22) *
+          effect.strength;
+
+        const sx =
+          Math.cos(shardAngle) *
+          travel;
+
+        const sy =
+          Math.sin(shardAngle) *
+          travel;
+
+        const shardLength =
+          shard.length *
+          (0.5 + fade * 0.9);
+
+        ctx.globalAlpha =
+          Math.max(
+            0,
+            fade * 0.98
+          );
+        ctx.strokeStyle =
+          shard.color;
+        ctx.lineWidth =
+          shard.width;
+        ctx.lineCap = "round";
+        ctx.beginPath();
+        ctx.moveTo(
+          sx -
+            Math.cos(shardAngle) *
+              shardLength,
+          sy -
+            Math.sin(shardAngle) *
+              shardLength
+        );
+        ctx.lineTo(sx, sy);
+        ctx.stroke();
+      }
+
+      /* 마지막에 어두운 연기가 남아 폭발의 잔상을 만든다. */
+      ctx.globalCompositeOperation =
+        "source-over";
+
+      for (
+        let j = 0;
+        j < effect.smoke.length;
+        j++
+      ) {
+        const smoke =
+          effect.smoke[j];
+
+        const travel =
+          smoke.distance +
+          smoke.drift *
+            easeOut;
+
+        const sx =
+          Math.cos(smoke.angle) *
+          travel;
+
+        const sy =
+          Math.sin(smoke.angle) *
+          travel -
+          progress * 10;
+
+        const radius =
+          smoke.radius *
+          (0.72 + progress * 1.35);
+
+        const smokeGradient =
+          ctx.createRadialGradient(
+            sx,
+            sy,
+            0,
+            sx,
+            sy,
+            radius
+          );
+
+        smokeGradient.addColorStop(
+          0,
+          `rgba(54,34,31,${smoke.alpha * fade})`
+        );
+        smokeGradient.addColorStop(
+          0.62,
+          `rgba(77,43,34,${smoke.alpha * 0.62 * fade})`
+        );
+        smokeGradient.addColorStop(
+          1,
+          "rgba(30,18,18,0)"
+        );
+
+        ctx.fillStyle =
+          smokeGradient;
+        ctx.beginPath();
+        ctx.arc(
+          sx,
+          sy,
+          radius,
+          0,
+          Math.PI * 2
+        );
+        ctx.fill();
+      }
+
+      ctx.restore();
     }
 
     ctx.globalCompositeOperation =
@@ -5675,6 +7180,32 @@ import {
       H - FLOOR
     );
 
+    /*
+     * 과부하 상태에서는 플레이 필드만 아주 옅게 붉게 표시한다.
+     * 공과 이펙트 위가 아니라 배경 위에 먼저 칠해 가독성을 유지한다.
+     */
+    if (overload || overloadShot) {
+      ctx.fillStyle =
+        "rgba(229,57,53,.085)";
+
+      ctx.fillRect(
+        0,
+        0,
+        W,
+        FLOOR
+      );
+
+      ctx.fillStyle =
+        "rgba(229,57,53,.035)";
+
+      ctx.fillRect(
+        0,
+        FLOOR,
+        W,
+        H - FLOOR
+      );
+    }
+
     if (shake > 0.1) {
       ctx.translate(
         (
@@ -5829,7 +7360,7 @@ import {
 
     if (flash > 0) {
       ctx.fillStyle =
-        `rgba(255,255,255,${flash})`;
+        `rgba(255,245,225,${flash * 0.45})`;
 
       ctx.fillRect(
         0,
@@ -5872,6 +7403,18 @@ import {
         `${score.toLocaleString()}점 · 최고 콤보 ${bestCombo}`,
         W / 2,
         H / 2 + 20
+      );
+
+      ctx.font =
+        "800 18px system-ui";
+
+      ctx.fillStyle =
+        "#d8d3ff";
+
+      ctx.fillText(
+        "화면을 눌러 다시 시작",
+        W / 2,
+        H / 2 + 62
       );
     }
 
@@ -5944,6 +7487,12 @@ import {
       }
 
       /*
+       * 미사일공은 가장 가까운 공을 추적한다.
+       * 공을 맞힐수록 유도 가속도와 최대 속도 상한이 함께 낮아진다.
+       */
+      applyMissileGuidance(deltaTime, now);
+
+      /*
        * 화면 밖 발사 공이 맵에 들어오지 못한 경우
        * updateOutsideShot 내부에서 턴을 종료한다.
        */
@@ -5969,6 +7518,15 @@ import {
        */
       separateStuckBalls();
 
+      /*
+       * 공들을 관통하던 블랙홀공이 마지막 위치에서 멈추면
+       * 그 지점을 중심으로 흡수 효과를 시작한다.
+       */
+      if (activateStoppedBlackHoleBalls()) {
+        quietFrames = 0;
+        shotStartedAt = now;
+      }
+
       const allStopped =
         !hasActiveSpecialEffect() &&
         areAllBallsStopped();
@@ -5982,8 +7540,15 @@ import {
         (
           quietFrames >=
             REQUIRED_QUIET_FRAMES ||
-          now - shotStartedAt >=
-            MAX_SHOT_DURATION_MS
+          (
+            now - shotStartedAt >=
+              MAX_SHOT_DURATION_MS &&
+            !balls.some(
+              ball =>
+                ball.specialType === "missile" &&
+                !ball.missileFinished
+            )
+          )
         )
       ) {
         /*
@@ -5992,13 +7557,33 @@ import {
          * 먼저 구름공을 폭발시킨 뒤 폭발로 밀려난 공의 움직임을
          * 다시 물리 엔진에서 처리한다.
          */
+        const remainingBlackHoleBalls =
+          balls.filter(
+            ball =>
+              ball.specialType === "blackHole" &&
+              !ball.blackHoleActivated
+          );
+
         const stoppedCloudBalls =
           balls.filter(
             ball =>
               ball.specialType === "cloud"
           );
 
-        if (stoppedCloudBalls.length > 0) {
+        if (remainingBlackHoleBalls.length > 0) {
+          for (
+            let i = 0;
+            i < remainingBlackHoleBalls.length;
+            i++
+          ) {
+            triggerBlackHoleBall(
+              remainingBlackHoleBalls[i]
+            );
+          }
+
+          quietFrames = 0;
+          shotStartedAt = now;
+        } else if (stoppedCloudBalls.length > 0) {
           for (
             let i = 0;
             i < stoppedCloudBalls.length;
