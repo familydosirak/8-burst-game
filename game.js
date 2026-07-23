@@ -7184,7 +7184,11 @@ import {
      * 과부하 상태에서는 플레이 필드만 아주 옅게 붉게 표시한다.
      * 공과 이펙트 위가 아니라 배경 위에 먼저 칠해 가독성을 유지한다.
      */
-    if (overload || overloadShot) {
+    const currentlyOverloaded =
+      fieldBallCount() >=
+      BALL_COUNT_LIMIT;
+
+    if (currentlyOverloaded) {
       ctx.fillStyle =
         "rgba(229,57,53,.085)";
 
