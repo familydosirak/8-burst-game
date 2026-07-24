@@ -564,7 +564,7 @@ import {
         "다른 공을 관통해 이동하고, 마지막으로 멈춘 자리에서 주변 공을 빨아들입니다. 먹은 공은 모두 콤보가 되고, 먹은 개수에 비례해 폭발 범위와 힘이 커집니다.",
 
       missile:
-        "흰색 미사일공입니다. 사용자가 맞춘 발사 힘으로 출발해 가장 가까운 공 유도됩니다.. 숫자나 색과 관계없이 닿은 공을 더 크게 폭발시키며, 공을 터뜨릴 때마다 점점 느려지고 12개를 터뜨리면 사라집니다."
+        "흰색 미사일공입니다. 사용자가 맞춘 발사 힘으로 출발해 가장 가까운 일반 숫자 공을 유도 추적합니다. 닿은 숫자 공을 크게 폭발시키며, 공을 터뜨릴 때마다 점점 느려지고 12개를 터뜨리면 사라집니다. 검은 구슬은 타깃으로 삼지 않으며 우연히 충돌해도 제거하거나 명중 횟수를 소모하지 않습니다."
     };
 
     return descriptions[type] || "";
@@ -597,8 +597,8 @@ import {
       ],
 
       missile: [
-        "가까운 공을 강하게 추적하며",
-        "12개를 터뜨리면 사라집니다."
+        "가까운 숫자 공을 추적하며",
+        "검은 구슬은 파괴하지 않습니다."
       ]
     };
 
@@ -1870,7 +1870,8 @@ import {
     gained,
     velocityX,
     velocityY,
-    strength = 1
+    strength = 1,
+    showScore = true
   ) {
     playExplosionSound(
       combo,
@@ -2042,33 +2043,39 @@ import {
       });
     }
 
-    if (
-      floatingTexts.length <
-      MAX_FLOATING_TEXTS
-    ) {
-      floatingTexts.push({
-        x,
-        y: y - 18,
-        text: `MISSILE +${gained}`,
-        life: 1.0,
-        color: "#ffd75a",
-        combo: false
-      });
-    }
-
-    if (
-      combo >= 3 &&
-      floatingTexts.length <
+    /*
+     * 일반 숫자 공을 맞혔을 때만 점수와 콤보를 표시한다.
+     * 검은 구슬 충돌은 미사일 폭발 연출만 발생한다.
+     */
+    if (showScore) {
+      if (
+        floatingTexts.length <
         MAX_FLOATING_TEXTS
-    ) {
-      floatingTexts.push({
-        x,
-        y: y + 24,
-        text: `${combo} COMBO!`,
-        life: 0.9,
-        color: "#ffffff",
-        combo: true
-      });
+      ) {
+        floatingTexts.push({
+          x,
+          y: y - 18,
+          text: `MISSILE +${gained}`,
+          life: 1.0,
+          color: "#ffd75a",
+          combo: false
+        });
+      }
+
+      if (
+        combo >= 3 &&
+        floatingTexts.length <
+          MAX_FLOATING_TEXTS
+      ) {
+        floatingTexts.push({
+          x,
+          y: y + 24,
+          text: `${combo} COMBO!`,
+          life: 0.9,
+          color: "#ffffff",
+          combo: true
+        });
+      }
     }
   }
 
@@ -2240,7 +2247,11 @@ import {
     for (let i = 0; i < targets.length; i++) {
       const ball = targets[i];
 
-      if (!ballByBodyId.has(ball.body.id)) {
+      if (
+        !ballByBodyId.has(ball.body.id) ||
+        ball.isBlack ||
+        ball.specialType
+      ) {
         continue;
       }
 
@@ -2726,8 +2737,8 @@ import {
   }
 
   /**
-   * 미사일공은 한 턴 동안 유지되며 충돌한 공을 조건 없이 폭발시킨다.
-   * 일반 숫자 공뿐 아니라 검은 구슬도 제거할 수 있다.
+   * 미사일공은 한 턴 동안 일반 숫자 공을 추적한다.
+   * 검은 구슬은 추적하거나 제거하지 않는다.
    */
   function missileRemainingRatio(hitCount) {
     return Math.max(
@@ -2809,9 +2820,10 @@ import {
   }
 
   /**
-   * 미사일공은 한 턴 동안 유지되며 충돌한 공을 조건 없이 폭발시킨다.
-   * 공 하나를 터뜨릴 때마다 목표 속도가 낮아지고,
-   * 설정된 충돌 횟수에 도달하면 즉시 사라진다.
+   * 미사일공은 일반 숫자 공을 제거하고 폭발시킨다.
+   *
+   * 검은 구슬은 파괴하지 않는다. 검은 구슬과 우연히 충돌하면
+   * 폭발 연출과 물리 충격만 발생하고 점수·콤보·명중 횟수는 증가하지 않는다.
    */
   function triggerMissileBall(
     missileBall,
@@ -2838,12 +2850,52 @@ import {
     const y =
       targetBall.body.position.y;
 
+    /*
+     * 검은 구슬과 우연히 충돌한 경우다.
+     * 검은 구슬과 미사일을 모두 유지하고 명중 횟수도 소모하지 않는다.
+     */
+    if (targetBall.isBlack) {
+      missileBall.missileTargetBodyId = null;
+
+      // 충돌은 발생했으므로 미명중 제한 시간만 다시 시작한다.
+      missileBall.missileLastHitAt =
+        performance.now();
+
+      createMissileImpact(
+        x,
+        y,
+        0,
+        missileBall.body.velocity.x,
+        missileBall.body.velocity.y,
+        MISSILE_EXPLOSION_STRENGTH,
+        false
+      );
+
+      applyBlast(
+        x,
+        y,
+        [missileBall],
+        BLAST_RADIUS *
+          MISSILE_BLAST_RADIUS_MULTIPLIER,
+        BLAST_FORCE *
+          MISSILE_BLAST_FORCE_MULTIPLIER
+      );
+
+      setStatus(
+        `검은 구슬은 파괴되지 않습니다. · 미사일 명중 ${missileBall.missileHits}/${MISSILE_MAX_HITS}`,
+        "MISSILE BLOCK"
+      );
+
+      return;
+    }
+
     removeBall(targetBall);
 
-    // 방금 제거한 목표를 놓고 다음 공을 다시 탐색한다.
+    // 방금 제거한 목표를 놓고 다음 일반 숫자 공을 다시 탐색한다.
     missileBall.missileTargetBodyId = null;
     missileBall.missileHits++;
-    missileBall.missileLastHitAt = performance.now();
+    missileBall.missileLastHitAt =
+      performance.now();
 
     const gained =
       addScore();
@@ -2854,7 +2906,8 @@ import {
       gained,
       missileBall.body.velocity.x,
       missileBall.body.velocity.y,
-      MISSILE_EXPLOSION_STRENGTH
+      MISSILE_EXPLOSION_STRENGTH,
+      true
     );
 
     applyBlast(
@@ -2945,6 +2998,7 @@ import {
     return Boolean(
       target &&
       target !== missileBall &&
+      !target.isBlack &&
       !target.specialType &&
       !target.effectLocked &&
       ballByBodyId.has(
@@ -5742,6 +5796,8 @@ import {
             effect.targets[j];
 
           if (
+            target.ball.isBlack ||
+            target.ball.specialType ||
             !ballByBodyId.has(
               target.ball.body.id
             )
