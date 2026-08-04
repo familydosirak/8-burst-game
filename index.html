@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>8 Burst</title>
-  <link rel="stylesheet" href="./style.css?v=22" />
+  <link rel="stylesheet" href="./style.css?v=23" />
 </head>
 <body>
   <main class="app">
@@ -89,8 +89,33 @@
 
     <section class="card ranking-card">
       <div class="row ranking-header">
-        <div>
-          <h2 class="section-title">이번 주 랭킹</h2>
+        <div class="ranking-title-area">
+          <h2 class="sr-only">랭킹</h2>
+
+          <div class="ranking-tabs" role="tablist" aria-label="랭킹 종류">
+            <button
+              id="weeklyRankingTab"
+              class="ranking-tab active"
+              type="button"
+              role="tab"
+              aria-selected="true"
+              aria-controls="rankingList"
+            >
+              주간 랭킹
+            </button>
+
+            <button
+              id="allTimeRankingTab"
+              class="ranking-tab"
+              type="button"
+              role="tab"
+              aria-selected="false"
+              aria-controls="rankingList"
+            >
+              전체 랭킹
+            </button>
+          </div>
+
           <span id="rankingWeek" class="muted"></span>
         </div>
 
@@ -135,7 +160,7 @@
     <div id="nicknameModal" class="modal" hidden>
       <div class="modal-backdrop"></div>
       <section class="modal-dialog" role="dialog" aria-modal="true" aria-labelledby="nicknameModalTitle">
-        <h2 id="nicknameModalTitle">주간 랭킹 등록</h2>
+        <h2 id="nicknameModalTitle">랭킹 등록</h2>
         <p class="modal-score">최종 점수 <strong id="finalScoreText">0점</strong></p>
         <label class="input-label" for="nicknameInput">닉네임</label>
         <input id="nicknameInput" class="text-input" type="text" maxlength="12" autocomplete="nickname" placeholder="1~12자 닉네임" />
@@ -149,6 +174,6 @@
   </main>
 
   <script src="https://cdn.jsdelivr.net/npm/matter-js@0.20.0/build/matter.min.js"></script>
-  <script type="module" src="./game.js?v=51"></script>
+  <script type="module" src="./game.js?v=54"></script>
 </body>
 </html>

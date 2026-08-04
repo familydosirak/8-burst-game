@@ -29,6 +29,18 @@ button, canvas { -webkit-tap-highlight-color: transparent; }
 .badge { display: inline-flex; min-width: 30px; height: 30px; padding: 0 10px; align-items: center; justify-content: center; border-radius: 999px; font-weight: 800; }
 .state-badge { background: var(--accent); }
 
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 .ball-count-info {
   display: flex;
   align-items: center;
@@ -81,6 +93,44 @@ canvas.game-over { cursor: pointer; }
   align-items: flex-start;
 }
 
+.ranking-title-area {
+  display: grid;
+  gap: 6px;
+}
+
+.ranking-tabs {
+  display: inline-flex;
+  width: fit-content;
+  padding: 3px;
+  gap: 3px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: rgba(13, 17, 23, 0.55);
+}
+
+.ranking-tab {
+  min-height: 36px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 900;
+}
+
+.ranking-tab:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.ranking-tab.active {
+  background: var(--accent);
+  color: #ffffff;
+}
+
 .ranking-actions {
   display: flex;
   align-items: center;
@@ -130,8 +180,10 @@ canvas.game-over { cursor: pointer; }
   vertical-align: 2px;
 }
 .ranking-extra, .ranking-empty { color: var(--muted); font-size: 13px; }
-.ranking-result { display: flex; flex-direction: column; align-items: flex-end; gap: 3px; white-space: nowrap; }
-.ranking-combo { color: var(--yellow); font-size: 12px; font-weight: 700; }
+.ranking-result { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; white-space: nowrap; }
+.ranking-record-info { display: flex; align-items: center; justify-content: flex-end; gap: 8px; font-size: 12px; font-weight: 700; }
+.ranking-combo { color: var(--yellow); }
+.ranking-turn { color: var(--muted); }
 
 .ranking-pagination[hidden] {
   display: none;
@@ -237,6 +289,18 @@ input, textarea, .text-input { -webkit-user-select: text; user-select: text; -we
     display: block;
   }
 
+  .ranking-title-area {
+    width: 100%;
+  }
+
+  .ranking-tabs {
+    width: 100%;
+  }
+
+  .ranking-tab {
+    flex: 1;
+  }
+
   .ranking-actions {
     justify-content: space-between;
     margin-top: 10px;
@@ -245,6 +309,17 @@ input, textarea, .text-input { -webkit-user-select: text; user-select: text; -we
   .my-ranking-text {
     flex: 1;
     justify-content: flex-start;
+  }
+
+  .ranking-item {
+    grid-template-columns: 44px minmax(0, 1fr) auto;
+    gap: 7px;
+  }
+
+  .ranking-record-info {
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 1px;
   }
 
   .ranking-pagination {

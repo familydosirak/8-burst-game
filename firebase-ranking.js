@@ -110,7 +110,6 @@ export async function initializeRanking() {
 
 /**
  * 현재 브라우저의 Firebase 익명 사용자 UID를 반환한다.
- * 닉네임이 같아도 UID는 사용자마다 다르다.
  */
 export async function getCurrentRankingUserId() {
   const user = await initializeRanking();
@@ -118,86 +117,202 @@ export async function getCurrentRankingUserId() {
 }
 
 /**
- * 해당 브라우저 익명 계정의 이번 주 최고 점수만 저장한다.
- * 문서 ID 자체가 user.uid이므로 같은 닉네임도 서로 별도 기록된다.
+ * 한 번의 게임 결과를 주간 최고 기록과 전체 최고 기록에 함께 반영한다.
+ *
+ * 주간 기록:
+ *   weeklyRankings/{weekId}/scores/{uid}
+ *
+ * 전체 기록:
+ *   allTimeRankings/{uid}
+ *
+ * 전체 랭킹은 기간별 점수를 합산하지 않고,
+ * 사용자의 모든 게임 중 가장 높은 단일 점수를 저장한다.
  */
-export async function submitWeeklyScore({ nickname, score, bestCombo, turn }) {
+export async function submitRankingScore({
+  nickname,
+  score,
+  bestCombo,
+  turn
+}) {
   const user = await initializeRanking();
   const weekId = getCurrentWeekId();
-  const scoreRef = doc(db, "weeklyRankings", weekId, "scores", user.uid);
+
+  const weeklyScoreRef = doc(
+    db,
+    "weeklyRankings",
+    weekId,
+    "scores",
+    user.uid
+  );
+
+  const allTimeScoreRef = doc(
+    db,
+    "allTimeRankings",
+    user.uid
+  );
 
   const cleanNickname = sanitizeNickname(nickname);
-  const cleanScore = normalizeInteger(score, 0, 1_000_000_000_000);
-  const cleanBestCombo = normalizeInteger(bestCombo, 0, 10_000_000);
-  const cleanTurn = normalizeInteger(turn, 0, 1_000_000);
+  const cleanScore = normalizeInteger(
+    score,
+    0,
+    1_000_000_000_000
+  );
+  const cleanBestCombo = normalizeInteger(
+    bestCombo,
+    0,
+    10_000_000
+  );
+  const cleanTurn = normalizeInteger(
+    turn,
+    0,
+    1_000_000
+  );
 
   return runTransaction(db, async transaction => {
-    const oldSnapshot = await transaction.get(scoreRef);
-    const previousScore = oldSnapshot.exists()
-      ? Number(oldSnapshot.data().score || 0)
+    /*
+     * Firestore 트랜잭션은 모든 읽기를 먼저 끝낸 뒤 쓰기를 진행한다.
+     */
+    const weeklySnapshot =
+      await transaction.get(weeklyScoreRef);
+
+    const allTimeSnapshot =
+      await transaction.get(allTimeScoreRef);
+
+    const previousWeeklyScore = weeklySnapshot.exists()
+      ? Number(weeklySnapshot.data().score || 0)
       : 0;
 
-    if (oldSnapshot.exists() && cleanScore <= previousScore) {
-      return {
-        updated: false,
-        previousScore,
-        weekId,
-        uid: user.uid
-      };
-    }
+    const previousAllTimeScore = allTimeSnapshot.exists()
+      ? Number(allTimeSnapshot.data().score || 0)
+      : 0;
 
-    transaction.set(scoreRef, {
+    const weeklyUpdated =
+      !weeklySnapshot.exists() ||
+      cleanScore > previousWeeklyScore;
+
+    const allTimeUpdated =
+      !allTimeSnapshot.exists() ||
+      cleanScore > previousAllTimeScore;
+
+    const commonData = {
       uid: user.uid,
       nickname: cleanNickname,
       score: cleanScore,
       bestCombo: cleanBestCombo,
       turn: cleanTurn,
-      weekId,
       updatedAt: serverTimestamp()
-    });
+    };
+
+    if (weeklyUpdated) {
+      transaction.set(weeklyScoreRef, {
+        ...commonData,
+        weekId
+      });
+    }
+
+    if (allTimeUpdated) {
+      transaction.set(allTimeScoreRef, {
+        ...commonData,
+        sourceWeekId: weekId
+      });
+    }
 
     return {
-      updated: true,
-      previousScore,
+      uid: user.uid,
       weekId,
-      uid: user.uid
+      weeklyUpdated,
+      allTimeUpdated,
+      previousWeeklyScore,
+      previousAllTimeScore
     };
   });
 }
 
 /**
- * 이번 주 랭킹을 점수 내림차순으로 조회한다.
- * 각 항목에 uid를 포함하여 닉네임이 아닌 UID로 본인 여부를 판별한다.
+ * 주간 랭킹과 전체 랭킹을 동시에 조회한다.
+ * 게임에서는 이 함수만 호출하므로 탭 전환 시 추가 조회가 발생하지 않는다.
  */
-export async function getWeeklyRanking(maxResults = 20) {
+export async function getRankingBundle(maxResults = 20) {
   const user = await initializeRanking();
-
   const weekId = getCurrentWeekId();
-  const scoresRef = collection(db, "weeklyRankings", weekId, "scores");
-  const rankingQuery = query(
-    scoresRef,
-    orderBy("score", "desc"),
-    limit(Math.max(1, Math.min(500, Number(maxResults) || 20)))
+  const safeLimit = Math.max(
+    1,
+    Math.min(500, Number(maxResults) || 20)
   );
 
-  const snapshot = await getDocs(rankingQuery);
+  const weeklyScoresRef = collection(
+    db,
+    "weeklyRankings",
+    weekId,
+    "scores"
+  );
+
+  const allTimeScoresRef = collection(
+    db,
+    "allTimeRankings"
+  );
+
+  const weeklyQuery = query(
+    weeklyScoresRef,
+    orderBy("score", "desc"),
+    limit(safeLimit)
+  );
+
+  const allTimeQuery = query(
+    allTimeScoresRef,
+    orderBy("score", "desc"),
+    limit(safeLimit)
+  );
+
+  const [weeklySnapshot, allTimeSnapshot] =
+    await Promise.all([
+      getDocs(weeklyQuery),
+      getDocs(allTimeQuery)
+    ]);
 
   return {
     weekId,
     currentUserUid: user.uid,
-    rankings: snapshot.docs.map((scoreDocument, index) => {
-      const data = scoreDocument.data();
-
-      return {
-        uid: String(data.uid || scoreDocument.id),
-        rank: index + 1,
-        nickname: String(data.nickname || "익명"),
-        score: Number(data.score || 0),
-        bestCombo: Number(data.bestCombo || 0),
-        turn: Number(data.turn || 0)
-      };
-    })
+    weeklyRankings: mapRankingSnapshot(weeklySnapshot),
+    allTimeRankings: mapRankingSnapshot(allTimeSnapshot)
   };
+}
+
+/**
+ * 필요할 때 개별 조회에도 사용할 수 있도록 유지한다.
+ */
+export async function getWeeklyRanking(maxResults = 20) {
+  const bundle = await getRankingBundle(maxResults);
+
+  return {
+    weekId: bundle.weekId,
+    currentUserUid: bundle.currentUserUid,
+    rankings: bundle.weeklyRankings
+  };
+}
+
+export async function getAllTimeRanking(maxResults = 20) {
+  const bundle = await getRankingBundle(maxResults);
+
+  return {
+    currentUserUid: bundle.currentUserUid,
+    rankings: bundle.allTimeRankings
+  };
+}
+
+function mapRankingSnapshot(snapshot) {
+  return snapshot.docs.map((scoreDocument, index) => {
+    const data = scoreDocument.data();
+
+    return {
+      uid: String(data.uid || scoreDocument.id),
+      rank: index + 1,
+      nickname: String(data.nickname || "익명"),
+      score: Number(data.score || 0),
+      bestCombo: Number(data.bestCombo || 0),
+      turn: Number(data.turn || 0)
+    };
+  });
 }
 
 function sanitizeNickname(value) {

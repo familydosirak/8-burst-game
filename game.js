@@ -1,11 +1,11 @@
 import {
   getCurrentWeekId,
-  getWeeklyRanking,
+  getRankingBundle,
   getCurrentRankingUserId,
   isFirebaseConfigured,
-  submitWeeklyScore,
+  submitRankingScore,
   getCurrentWeekRange
-} from "./firebase-ranking.js?v=2";
+} from "./firebase-ranking.js?v=3";
 
 (() => {
   "use strict";
@@ -37,6 +37,8 @@ import {
     nextBalls: document.querySelector("#nextBalls"),
     specialBallInfo: document.querySelector("#specialBallInfo"),
     resetButton: document.querySelector("#resetButton"),
+    weeklyRankingTab: document.querySelector("#weeklyRankingTab"),
+    allTimeRankingTab: document.querySelector("#allTimeRankingTab"),
     rankingWeek: document.querySelector("#rankingWeek"),
     rankingList: document.querySelector("#rankingList"),
     myRankingText: document.querySelector("#myRankingText"),
@@ -240,6 +242,24 @@ import {
   const BALL_SEPARATION_SPEED_LIMIT = 0.7;
 
   /*
+   * 물리 엔진은 기존 게임 감각과 같은 60Hz를 기준으로 계산한다.
+   *
+   * 화면이 30fps인 기기에서는 한 화면에 물리를 두 번 계산하고,
+   * 120fps인 기기에서는 두 화면에 한 번 계산한다.
+   * 따라서 기기 주사율이 달라도 공의 속도와 충돌 감각은 같아진다.
+   */
+  const PHYSICS_STEP_MS = 1000 / 60;
+  const MAX_PHYSICS_STEPS_PER_FRAME = 4;
+  const MAX_FRAME_DELTA_MS = 67;
+
+  /*
+   * 정상 플레이 속도에는 개입하지 않고,
+   * 충돌 오류로만 나올 수 있는 극단적인 속도만 제한한다.
+   */
+  const MAX_EMERGENCY_BALL_SPEED = 120;
+  const ESCAPED_BALL_MARGIN = BALL_RADIUS * 2;
+
+  /*
    * 발사 공이 숫자 공을 터뜨렸을 때 받는 반동
    */
   const SHOT_EXPLOSION_RECOIL = 10;
@@ -350,6 +370,7 @@ import {
   let shotStartedAt = 0;
   let quietFrames = 0;
   let previousTime = performance.now();
+  let physicsAccumulator = 0;
 
   let shake = 0;
   let flash = 0;
@@ -399,27 +420,42 @@ import {
     )
   );
   /*
-   * 랭킹 새로고침 쿨타임
-   *
-   * 종료 시각을 localStorage에 저장하므로
-   * 페이지를 새로고침해도 남은 쿨타임이 유지된다.
+   * 주간 랭킹과 전체 랭킹은 한 번의 새로고침 동작에서 함께 조회한다.
+   * 조회 결과와 쿨타임을 localStorage에 저장하여 페이지 새로고침이나
+   * 랭킹 탭 전환만으로 Firebase 조회가 반복되지 않게 한다.
    */
   const RANKING_REFRESH_COOLDOWN_MS = 30 * 1000;
   const RANKING_REFRESH_STORAGE_KEY =
     "burst8RankingRefreshCooldownUntil";
 
-  /*
-   * 랭킹은 Firebase에서 넉넉하게 받아온 뒤
-   * 브라우저에서 10명 단위로 나누어 표시한다.
-   */
   const RANKING_PAGE_SIZE = 10;
   const RANKING_FETCH_LIMIT = 500;
   const RANKING_CACHE_STORAGE_KEY =
-    "burst8WeeklyRankingCache";
+    "burst8RankingBundleCacheV2";
 
-  let weeklyRankingItems = [];
-  let rankingCurrentPage = 1;
+  const RANKING_MODE = {
+    WEEKLY: "weekly",
+    ALL_TIME: "allTime"
+  };
+
+  let rankingMode =
+    RANKING_MODE.WEEKLY;
+
+  let rankingItemsByMode = {
+    weekly: [],
+    allTime: []
+  };
+
+  let rankingCurrentPageByMode = {
+    weekly: 1,
+    allTime: 1
+  };
+
   let currentRankingUid = "";
+  let rankingDataLoaded = false;
+  let rankingUsingSavedCache = false;
+  let rankingCacheSavedAt = 0;
+  let rankingFetchPromise = null;
 
   let rankingRefreshTimer = null;
   let rankingRefreshCooldownUntil =
@@ -1509,6 +1545,7 @@ import {
 
     balls = [];
     ballByBodyId = new Map();
+    physicsAccumulator = 0;
 
     launchGate = null;
     activeShotBall = null;
@@ -3704,6 +3741,7 @@ import {
     advanceQueueImmediately();
 
     moving = true;
+    physicsAccumulator = 0;
     shotStartedAt =
       performance.now();
 
@@ -3861,6 +3899,71 @@ import {
       BALL_SEPARATION_SPEED_LIMIT *
       BALL_SEPARATION_SPEED_LIMIT;
 
+    /*
+     * 한 번의 60Hz 물리 스텝에서 한 공은 분리 반동을 한 번만 받는다.
+     *
+     * 기존에는 밀집된 공 하나가 여러 이웃과 겹치면
+     * BALL_SEPARATION_PUSH가 여러 번 더해질 수 있었다.
+     * 이 제한은 원래의 터지는 감각은 유지하면서 연속 가속만 막는다.
+     */
+    const pushedBodyIds = new Set();
+
+    function applyBoundedSeparationPush(
+      ball,
+      pushX,
+      pushY
+    ) {
+      const bodyId = ball.body.id;
+
+      if (pushedBodyIds.has(bodyId)) {
+        return;
+      }
+
+      let velocityX =
+        ball.body.velocity.x +
+        pushX;
+
+      let velocityY =
+        ball.body.velocity.y +
+        pushY;
+
+      const speed =
+        Math.hypot(
+          velocityX,
+          velocityY
+        );
+
+      /*
+       * 저속 분리 반동의 결과가 저속 판정 범위를 크게 넘지 않게 한다.
+       * 두 공이 반대 방향으로 0.22씩 움직이는 기존 상대속도는 유지된다.
+       */
+      const maximumSeparationSpeed =
+        BALL_SEPARATION_SPEED_LIMIT +
+        BALL_SEPARATION_PUSH;
+
+      if (
+        speed >
+        maximumSeparationSpeed
+      ) {
+        const scale =
+          maximumSeparationSpeed /
+          speed;
+
+        velocityX *= scale;
+        velocityY *= scale;
+      }
+
+      Body.setVelocity(
+        ball.body,
+        {
+          x: velocityX,
+          y: velocityY
+        }
+      );
+
+      pushedBodyIds.add(bodyId);
+    }
+
     for (let i = 0; i < balls.length; i++) {
       const first = balls[i];
 
@@ -3916,7 +4019,7 @@ import {
           second.body.position.y -
           first.body.position.y;
 
-        let distanceSquared =
+        const distanceSquared =
           dx * dx + dy * dy;
 
         if (
@@ -3947,7 +4050,10 @@ import {
           distance;
 
         const positionPush =
-          Math.min(0.6, overlap * 0.18);
+          Math.min(
+            0.6,
+            overlap * 0.18
+          );
 
         Body.setPosition(
           first.body,
@@ -3979,35 +4085,189 @@ import {
           }
         );
 
-        Body.setVelocity(
-          first.body,
-          {
-            x:
-              first.body.velocity.x -
-              normalX *
-                BALL_SEPARATION_PUSH,
-
-            y:
-              first.body.velocity.y -
-              normalY *
-                BALL_SEPARATION_PUSH
-          }
+        applyBoundedSeparationPush(
+          first,
+          -normalX *
+            BALL_SEPARATION_PUSH,
+          -normalY *
+            BALL_SEPARATION_PUSH
         );
 
-        Body.setVelocity(
-          second.body,
-          {
-            x:
-              second.body.velocity.x +
-              normalX *
-                BALL_SEPARATION_PUSH,
+        applyBoundedSeparationPush(
+          second,
+          normalX *
+            BALL_SEPARATION_PUSH,
+          normalY *
+            BALL_SEPARATION_PUSH
+        );
+      }
+    }
+  }
 
-            y:
-              second.body.velocity.y +
-              normalY *
-                BALL_SEPARATION_PUSH
+  /**
+   * 물리엔진이 완전히 놓친 경우에만 작동하는 최종 안전장치다.
+   *
+   * 정상적인 벽 충돌 과정에서 공이 벽 안으로 몇 픽셀 들어가는 것은
+   * Matter.js가 해결하도록 두고, 공의 중심이 벽 바깥을 완전히 통과한
+   * 경우에만 맵 안으로 복구한다.
+   */
+  function stabilizeEscapedBalls() {
+    for (let i = 0; i < balls.length; i++) {
+      const ball = balls[i];
+
+      if (ball.effectLocked) {
+        continue;
+      }
+
+      const body = ball.body;
+
+      let x = body.position.x;
+      let y = body.position.y;
+
+      let velocityX =
+        body.velocity.x;
+
+      let velocityY =
+        body.velocity.y;
+
+      let positionChanged = false;
+      let velocityChanged = false;
+
+      if (
+        !Number.isFinite(x) ||
+        !Number.isFinite(y)
+      ) {
+        x = Number.isFinite(ball.lastSafeX)
+          ? ball.lastSafeX
+          : SHOOT_X;
+
+        y = Number.isFinite(ball.lastSafeY)
+          ? ball.lastSafeY
+          : FLOOR - BALL_RADIUS - 4;
+
+        positionChanged = true;
+      }
+
+      if (
+        !Number.isFinite(velocityX) ||
+        !Number.isFinite(velocityY)
+      ) {
+        velocityX = 0;
+        velocityY = 0;
+        velocityChanged = true;
+      }
+
+      const speed =
+        Math.hypot(
+          velocityX,
+          velocityY
+        );
+
+      if (
+        speed >
+        MAX_EMERGENCY_BALL_SPEED
+      ) {
+        const scale =
+          MAX_EMERGENCY_BALL_SPEED /
+          speed;
+
+        velocityX *= scale;
+        velocityY *= scale;
+        velocityChanged = true;
+      }
+
+      /*
+       * 좌우와 위쪽은 공 중심이 캔버스 바깥으로 충분히 벗어났을 때만 복구한다.
+       */
+      if (
+        x <
+        -ESCAPED_BALL_MARGIN
+      ) {
+        x = BALL_RADIUS + 2;
+        velocityX =
+          Math.abs(velocityX);
+        positionChanged = true;
+        velocityChanged = true;
+      } else if (
+        x >
+        W + ESCAPED_BALL_MARGIN
+      ) {
+        x = W - BALL_RADIUS - 2;
+        velocityX =
+          -Math.abs(velocityX);
+        positionChanged = true;
+        velocityChanged = true;
+      }
+
+      if (
+        y <
+        -ESCAPED_BALL_MARGIN
+      ) {
+        y = TOP + BALL_RADIUS + 2;
+        velocityY =
+          Math.abs(velocityY);
+        positionChanged = true;
+        velocityChanged = true;
+      }
+
+      /*
+       * 이미 필드 안에 들어온 공이 바닥 벽 전체를 완전히 통과한 경우만 복구한다.
+       * 발사 중인 공은 아래 발사 구역을 정상적으로 이용해야 하므로 제외한다.
+       */
+      const mayUseLaunchArea =
+        ball.isShot &&
+        !ball.hasEnteredField;
+
+      if (
+        !mayUseLaunchArea &&
+        y >
+          FLOOR +
+          40 +
+          BALL_RADIUS
+      ) {
+        y = FLOOR - BALL_RADIUS - 2;
+        velocityY =
+          -Math.abs(velocityY);
+        positionChanged = true;
+        velocityChanged = true;
+      } else if (
+        y >
+        H + ESCAPED_BALL_MARGIN
+      ) {
+        y = H - BALL_RADIUS - 2;
+        velocityY =
+          -Math.abs(velocityY);
+        positionChanged = true;
+        velocityChanged = true;
+      }
+
+      if (positionChanged) {
+        Body.setPosition(
+          body,
+          { x, y }
+        );
+      }
+
+      if (velocityChanged) {
+        Body.setVelocity(
+          body,
+          {
+            x: velocityX,
+            y: velocityY
           }
         );
+      }
+
+      if (
+        Number.isFinite(x) &&
+        Number.isFinite(y) &&
+        x >= 0 &&
+        x <= W &&
+        y >= 0 &&
+        y <= H
+      ) {
+        ball.lastSafeX = x;
+        ball.lastSafeY = y;
       }
     }
   }
@@ -4034,7 +4294,7 @@ import {
   }
 
   /* =========================================================
-   * FIREBASE WEEKLY RANKING
+   * FIREBASE RANKING
    * ======================================================= */
 
   function openNicknameModal() {
@@ -4047,7 +4307,9 @@ import {
     ui.nicknameMessage.textContent = "";
     ui.nicknameMessage.classList.remove("error");
 
-    const savedNickname = localStorage.getItem("burst8Nickname") || "";
+    const savedNickname =
+      localStorage.getItem("burst8Nickname") || "";
+
     ui.nicknameInput.value = savedNickname;
     ui.nicknameModal.hidden = false;
 
@@ -4063,66 +4325,60 @@ import {
     ui.nicknameMessage.classList.remove("error");
   }
 
-  async function submitGameResult() {
-    if (rankingSubmitting) {
-      return;
+  function activeRankingItems() {
+    return rankingItemsByMode[rankingMode] || [];
+  }
+
+  function activeRankingPage() {
+    return rankingCurrentPageByMode[rankingMode] || 1;
+  }
+
+  function setActiveRankingPage(page) {
+    rankingCurrentPageByMode[rankingMode] = page;
+  }
+
+  function rankingModeLabel() {
+    return rankingMode === RANKING_MODE.ALL_TIME
+      ? "전체"
+      : "주간";
+  }
+
+  function updateRankingHeader() {
+    const weeklyActive =
+      rankingMode === RANKING_MODE.WEEKLY;
+
+    if (ui.weeklyRankingTab) {
+      ui.weeklyRankingTab.classList.toggle(
+        "active",
+        weeklyActive
+      );
+
+      ui.weeklyRankingTab.setAttribute(
+        "aria-selected",
+        String(weeklyActive)
+      );
     }
 
-    const nickname = ui.nicknameInput.value.trim();
+    if (ui.allTimeRankingTab) {
+      ui.allTimeRankingTab.classList.toggle(
+        "active",
+        !weeklyActive
+      );
 
-    if (!nickname) {
-      ui.nicknameMessage.textContent = "닉네임을 입력해 주세요.";
-      ui.nicknameMessage.classList.add("error");
-      ui.nicknameInput.focus();
-      return;
+      ui.allTimeRankingTab.setAttribute(
+        "aria-selected",
+        String(!weeklyActive)
+      );
     }
 
-    if (!isFirebaseConfigured()) {
-      ui.nicknameMessage.textContent =
-        "firebase-config.js에 Firebase 설정값을 먼저 입력해 주세요.";
-      ui.nicknameMessage.classList.add("error");
-      return;
-    }
+    const cacheText =
+      rankingUsingSavedCache
+        ? " · 저장된 랭킹"
+        : "";
 
-    rankingSubmitting = true;
-    ui.submitRankingButton.disabled = true;
-    ui.skipRankingButton.disabled = true;
-    ui.nicknameMessage.textContent = "랭킹을 등록하는 중입니다...";
-    ui.nicknameMessage.classList.remove("error");
-
-    try {
-      const result = await submitWeeklyScore({
-        nickname,
-        score,
-        bestCombo,
-        turn
-      });
-
-      localStorage.setItem("burst8Nickname", nickname);
-
-      ui.nicknameMessage.textContent = result.updated
-        ? "이번 주 최고 점수가 등록되었습니다."
-        : `기존 최고 점수 ${result.previousScore.toLocaleString()}점이 더 높습니다.`;
-
-      await renderWeeklyRanking();
-
-      window.setTimeout(() => {
-        closeNicknameModal();
-      }, 900);
-    } catch (error) {
-      console.error("랭킹 등록 실패:", error);
-
-      ui.nicknameMessage.textContent =
-        error?.message === "NICKNAME_REQUIRED"
-          ? "닉네임을 입력해 주세요."
-          : "랭킹 등록에 실패했습니다. Firebase 설정과 보안 규칙을 확인해 주세요.";
-
-      ui.nicknameMessage.classList.add("error");
-    } finally {
-      rankingSubmitting = false;
-      ui.submitRankingButton.disabled = false;
-      ui.skipRankingButton.disabled = false;
-    }
+    ui.rankingWeek.textContent = weeklyActive
+      ? `${getCurrentWeekRange()}${cacheText}`
+      : `전체 기간 · 최고 단일 점수${cacheText}`;
   }
 
   function isMyRankingItem(item) {
@@ -4144,23 +4400,21 @@ import {
       return;
     }
 
+    const items = activeRankingItems();
     const myRanking =
-      weeklyRankingItems.find(
-        isMyRankingItem
-      );
+      items.find(isMyRankingItem);
 
     if (!myRanking) {
       ui.myRankingText.textContent =
-        weeklyRankingItems.length >=
-        RANKING_FETCH_LIMIT
-          ? `내 랭킹 ${RANKING_FETCH_LIMIT}위 밖`
-          : "내 랭킹 등록 기록 없음";
+        items.length >= RANKING_FETCH_LIMIT
+          ? `내 ${rankingModeLabel()} 랭킹 ${RANKING_FETCH_LIMIT}위 밖`
+          : `내 ${rankingModeLabel()} 랭킹 등록 기록 없음`;
 
       return;
     }
 
     ui.myRankingText.textContent =
-      `내 랭킹 ${myRanking.rank}위 · ${Number(
+      `내 ${rankingModeLabel()} 랭킹 ${myRanking.rank}위 · ${Number(
         myRanking.score || 0
       ).toLocaleString()}점`;
   }
@@ -4169,8 +4423,7 @@ import {
     const row =
       document.createElement("li");
 
-    row.className =
-      "ranking-item";
+    row.className = "ranking-item";
 
     if (isMyRankingItem(item)) {
       row.classList.add(
@@ -4227,6 +4480,12 @@ import {
         item.score || 0
       ).toLocaleString()}점`;
 
+    const recordInfo =
+      document.createElement("span");
+
+    recordInfo.className =
+      "ranking-record-info";
+
     const comboText =
       document.createElement("span");
 
@@ -4234,11 +4493,25 @@ import {
       "ranking-combo";
 
     comboText.textContent =
-      `최고 ${item.bestCombo ?? 0}콤보`;
+      `최고 ${Number(item.bestCombo || 0).toLocaleString()}콤보`;
+
+    const turnText =
+      document.createElement("span");
+
+    turnText.className =
+      "ranking-turn";
+
+    turnText.textContent =
+      `최종 ${Number(item.turn || 0).toLocaleString()}턴`;
+
+    recordInfo.append(
+      comboText,
+      turnText
+    );
 
     resultBox.append(
       scoreText,
-      comboText
+      recordInfo
     );
 
     row.append(
@@ -4254,7 +4527,7 @@ import {
     return Math.max(
       1,
       Math.ceil(
-        weeklyRankingItems.length /
+        activeRankingItems().length /
         RANKING_PAGE_SIZE
       )
     );
@@ -4266,11 +4539,8 @@ import {
   ) {
     if (totalPages <= 7) {
       return Array.from(
-        {
-          length: totalPages
-        },
-        (_, index) =>
-          index + 1
+        { length: totalPages },
+        (_, index) => index + 1
       );
     }
 
@@ -4291,9 +4561,7 @@ import {
           page >= 1 &&
           page <= totalPages
       )
-      .sort(
-        (a, b) => a - b
-      );
+      .sort((a, b) => a - b);
   }
 
   function renderRankingPagination() {
@@ -4304,23 +4572,22 @@ import {
       return;
     }
 
-    const totalPages =
-      rankingTotalPages();
+    const items = activeRankingItems();
+    const currentPage = activeRankingPage();
+    const totalPages = rankingTotalPages();
 
     ui.rankingPagination.hidden =
-      weeklyRankingItems.length <=
-      RANKING_PAGE_SIZE;
+      items.length <= RANKING_PAGE_SIZE;
 
     ui.rankingPrevButton.disabled =
-      rankingCurrentPage <= 1;
+      currentPage <= 1;
 
     ui.rankingNextButton.disabled =
-      rankingCurrentPage >=
-      totalPages;
+      currentPage >= totalPages;
 
     const pageNumbers =
       pageNumbersToDisplay(
-        rankingCurrentPage,
+        currentPage,
         totalPages
       );
 
@@ -4332,25 +4599,19 @@ import {
       i < pageNumbers.length;
       i++
     ) {
-      const page =
-        pageNumbers[i];
+      const page = pageNumbers[i];
 
       if (
         i > 0 &&
-        page -
-          pageNumbers[i - 1] >
-          1
+        page - pageNumbers[i - 1] > 1
       ) {
         const ellipsis =
-          document.createElement(
-            "span"
-          );
+          document.createElement("span");
 
         ellipsis.className =
           "ranking-page-ellipsis";
 
-        ellipsis.textContent =
-          "…";
+        ellipsis.textContent = "…";
 
         fragment.appendChild(
           ellipsis
@@ -4358,9 +4619,7 @@ import {
       }
 
       const button =
-        document.createElement(
-          "button"
-        );
+        document.createElement("button");
 
       button.type = "button";
       button.className =
@@ -4377,13 +4636,8 @@ import {
         `${page}페이지`
       );
 
-      if (
-        page ===
-        rankingCurrentPage
-      ) {
-        button.classList.add(
-          "active"
-        );
+      if (page === currentPage) {
+        button.classList.add("active");
 
         button.setAttribute(
           "aria-current",
@@ -4401,43 +4655,59 @@ import {
     );
   }
 
+  function emptyRankingMessage() {
+    return rankingMode === RANKING_MODE.ALL_TIME
+      ? "전체 랭킹에 등록된 점수가 없습니다."
+      : "이번 주에 등록된 점수가 없습니다.";
+  }
+
   function renderRankingPage() {
+    updateRankingHeader();
+
     if (
-      weeklyRankingItems.length === 0
+      !rankingDataLoaded &&
+      rankingFetchPromise
     ) {
+      showRankingLoading();
+      return;
+    }
+
+    const items = activeRankingItems();
+
+    if (items.length === 0) {
+      ui.rankingList.innerHTML =
+        `<li class="ranking-empty">${emptyRankingMessage()}</li>`;
+
       if (ui.rankingPagination) {
-        ui.rankingPagination.hidden =
-          true;
+        ui.rankingPagination.hidden = true;
       }
 
       updateMyRankingDisplay();
       return;
     }
 
-    const totalPages =
-      rankingTotalPages();
+    const totalPages = rankingTotalPages();
 
-    rankingCurrentPage =
-      Math.min(
-        totalPages,
-        Math.max(
-          1,
-          rankingCurrentPage
-        )
-      );
+    const currentPage = Math.min(
+      totalPages,
+      Math.max(
+        1,
+        activeRankingPage()
+      )
+    );
+
+    setActiveRankingPage(
+      currentPage
+    );
 
     const startIndex =
-      (
-        rankingCurrentPage - 1
-      ) *
+      (currentPage - 1) *
       RANKING_PAGE_SIZE;
 
-    const pageItems =
-      weeklyRankingItems.slice(
-        startIndex,
-        startIndex +
-          RANKING_PAGE_SIZE
-      );
+    const pageItems = items.slice(
+      startIndex,
+      startIndex + RANKING_PAGE_SIZE
+    );
 
     ui.rankingList.replaceChildren(
       ...pageItems.map(
@@ -4450,46 +4720,113 @@ import {
   }
 
   function setRankingPage(page) {
-    const totalPages =
-      rankingTotalPages();
+    const totalPages = rankingTotalPages();
 
-    const nextPage =
-      Math.min(
-        totalPages,
-        Math.max(
-          1,
-          Number(page) || 1
-        )
-      );
+    const nextPage = Math.min(
+      totalPages,
+      Math.max(
+        1,
+        Number(page) || 1
+      )
+    );
 
+    if (nextPage === activeRankingPage()) {
+      return;
+    }
+
+    setActiveRankingPage(
+      nextPage
+    );
+
+    renderRankingPage();
+  }
+
+  function setRankingMode(nextMode) {
     if (
-      nextPage ===
-      rankingCurrentPage
+      nextMode !== RANKING_MODE.WEEKLY &&
+      nextMode !== RANKING_MODE.ALL_TIME
     ) {
       return;
     }
 
-    rankingCurrentPage =
-      nextPage;
+    if (rankingMode === nextMode) {
+      return;
+    }
+
+    rankingMode = nextMode;
+
+    /*
+     * 탭 전환은 이미 한꺼번에 받아 둔 배열만 바꿔 그린다.
+     * Firebase에는 어떠한 추가 조회도 보내지 않는다.
+     */
+    renderRankingPage();
+  }
+
+  function normalizeRankingItems(items) {
+    return (Array.isArray(items) ? items : [])
+      .map((item, index) => ({
+        ...item,
+        uid: String(item?.uid || ""),
+        nickname: String(item?.nickname || "익명"),
+        score: Number(item?.score || 0),
+        bestCombo: Number(item?.bestCombo || 0),
+        turn: Number(item?.turn || 0),
+        rank:
+          Number(item?.rank) > 0
+            ? Number(item.rank)
+            : index + 1
+      }));
+  }
+
+  function applyRankingBundle(
+    bundle,
+    resetPages = true
+  ) {
+    rankingItemsByMode.weekly =
+      normalizeRankingItems(
+        bundle?.weeklyRankings
+      );
+
+    rankingItemsByMode.allTime =
+      normalizeRankingItems(
+        bundle?.allTimeRankings
+      );
+
+    currentRankingUid = String(
+      bundle?.currentUserUid ||
+      currentRankingUid ||
+      ""
+    );
+
+    rankingDataLoaded = true;
+
+    if (resetPages) {
+      rankingCurrentPageByMode = {
+        weekly: 1,
+        allTime: 1
+      };
+    }
 
     renderRankingPage();
   }
 
   function saveRankingCache(
-    rankings,
-    currentUserUid = currentRankingUid
+    savedAt = rankingCacheSavedAt || Date.now()
   ) {
+    rankingCacheSavedAt = savedAt;
+
     try {
       localStorage.setItem(
         RANKING_CACHE_STORAGE_KEY,
         JSON.stringify({
-          weekId:
-            getCurrentWeekId(),
-          savedAt:
-            Date.now(),
+          weekId: getCurrentWeekId(),
+          savedAt,
           currentUserUid:
-            String(currentUserUid || ""),
-          rankings
+            String(currentRankingUid || ""),
+          weeklyRankings:
+            rankingItemsByMode.weekly,
+          allTimeRankings:
+            rankingItemsByMode.allTime
         })
       );
     } catch (error) {
@@ -4511,15 +4848,12 @@ import {
         return null;
       }
 
-      const cache =
-        JSON.parse(raw);
+      const cache = JSON.parse(raw);
 
       if (
-        cache?.weekId !==
-          getCurrentWeekId() ||
-        !Array.isArray(
-          cache.rankings
-        )
+        cache?.weekId !== getCurrentWeekId() ||
+        !Array.isArray(cache.weeklyRankings) ||
+        !Array.isArray(cache.allTimeRankings)
       ) {
         localStorage.removeItem(
           RANKING_CACHE_STORAGE_KEY
@@ -4529,13 +4863,13 @@ import {
       }
 
       return {
+        savedAt: Number(cache.savedAt || 0),
         currentUserUid:
-          String(
-            cache.currentUserUid ||
-            ""
-          ),
-        rankings:
-          cache.rankings
+          String(cache.currentUserUid || ""),
+        weeklyRankings:
+          cache.weeklyRankings,
+        allTimeRankings:
+          cache.allTimeRankings
       };
     } catch (error) {
       console.warn(
@@ -4547,155 +4881,185 @@ import {
     }
   }
 
-  function applyRankingData(
-    rankings,
-    resetPage = true
-  ) {
-    weeklyRankingItems =
-      rankings.map(
-        (item, index) => ({
-          ...item,
-          uid:
-            String(item?.uid || ""),
-          rank:
-            Number(item.rank) > 0
-              ? Number(
-                  item.rank
-                )
-              : index + 1
-        })
-      );
+  function sortAndRankRankingItems(items) {
+    return items
+      .sort((first, second) =>
+        Number(second.score || 0) -
+          Number(first.score || 0) ||
+        Number(second.bestCombo || 0) -
+          Number(first.bestCombo || 0) ||
+        Number(second.turn || 0) -
+          Number(first.turn || 0)
+      )
+      .slice(0, RANKING_FETCH_LIMIT)
+      .map((item, index) => ({
+        ...item,
+        rank: index + 1
+      }));
+  }
 
-    if (resetPage) {
-      rankingCurrentPage = 1;
+  function upsertSubmittedRankingItem(
+    mode,
+    item
+  ) {
+    const items = [
+      ...(rankingItemsByMode[mode] || [])
+    ];
+
+    const oldIndex = items.findIndex(
+      oldItem =>
+        String(oldItem.uid || "") ===
+        String(item.uid || "")
+    );
+
+    if (oldIndex >= 0) {
+      items[oldIndex] = item;
+    } else {
+      items.push(item);
     }
 
+    rankingItemsByMode[mode] =
+      sortAndRankRankingItems(items);
+  }
+
+  function mergeSubmittedScoreIntoCache(
+    nickname,
+    result
+  ) {
     if (
-      weeklyRankingItems.length === 0
+      !rankingDataLoaded ||
+      !result?.uid
     ) {
-      ui.rankingList.innerHTML =
-        '<li class="ranking-empty">이번 주에 등록된 점수가 없습니다.</li>';
-
-      if (ui.rankingPagination) {
-        ui.rankingPagination.hidden =
-          true;
-      }
-
-      updateMyRankingDisplay();
       return;
     }
 
+    const item = {
+      uid: String(result.uid),
+      nickname,
+      score,
+      bestCombo,
+      turn
+    };
+
+    if (result.weeklyUpdated) {
+      upsertSubmittedRankingItem(
+        RANKING_MODE.WEEKLY,
+        item
+      );
+    }
+
+    if (result.allTimeUpdated) {
+      upsertSubmittedRankingItem(
+        RANKING_MODE.ALL_TIME,
+        item
+      );
+    }
+
+    saveRankingCache();
     renderRankingPage();
   }
 
-  async function renderWeeklyRanking(
-    resetPage = true
-  ) {
-    ui.rankingWeek.textContent =
-      getCurrentWeekRange();
+  function rankingSubmitMessage(result) {
+    if (
+      result.weeklyUpdated &&
+      result.allTimeUpdated
+    ) {
+      return "주간 최고 점수와 전체 최고 점수가 등록되었습니다.";
+    }
 
-    if (!isFirebaseConfigured()) {
-      weeklyRankingItems = [];
-      currentRankingUid = "";
+    if (result.weeklyUpdated) {
+      return "주간 최고 점수가 등록되었습니다. 전체 최고 점수는 기존 기록이 더 높습니다.";
+    }
 
-      ui.rankingList.innerHTML =
-        '<li class="ranking-empty">firebase-config.js에 프로젝트 설정값을 입력해 주세요.</li>';
+    if (result.allTimeUpdated) {
+      return "전체 최고 점수가 등록되었습니다. 주간 최고 점수는 기존 기록이 더 높습니다.";
+    }
 
-      if (ui.myRankingText) {
-        ui.myRankingText.textContent =
-          "내 랭킹 확인 불가";
-      }
+    return `기존 주간 최고 ${Number(
+      result.previousWeeklyScore || 0
+    ).toLocaleString()}점 · 전체 최고 ${Number(
+      result.previousAllTimeScore || 0
+    ).toLocaleString()}점이 더 높습니다.`;
+  }
 
-      if (ui.rankingPagination) {
-        ui.rankingPagination.hidden =
-          true;
-      }
-
+  async function submitGameResult() {
+    if (rankingSubmitting) {
       return;
     }
 
-    ui.rankingList.innerHTML =
-      '<li class="ranking-empty">랭킹을 불러오는 중입니다...</li>';
+    const nickname =
+      ui.nicknameInput.value.trim();
 
-    if (ui.myRankingText) {
-      ui.myRankingText.textContent =
-        "내 랭킹 확인 중";
+    if (!nickname) {
+      ui.nicknameMessage.textContent =
+        "닉네임을 입력해 주세요.";
+      ui.nicknameMessage.classList.add("error");
+      ui.nicknameInput.focus();
+      return;
     }
 
-    if (ui.rankingPagination) {
-      ui.rankingPagination.hidden =
-        true;
+    if (!isFirebaseConfigured()) {
+      ui.nicknameMessage.textContent =
+        "firebase-config.js에 Firebase 설정값을 먼저 입력해 주세요.";
+      ui.nicknameMessage.classList.add("error");
+      return;
     }
+
+    rankingSubmitting = true;
+    ui.submitRankingButton.disabled = true;
+    ui.skipRankingButton.disabled = true;
+    ui.nicknameMessage.textContent =
+      "주간·전체 랭킹을 등록하는 중입니다...";
+    ui.nicknameMessage.classList.remove("error");
 
     try {
-      const result =
-        await getWeeklyRanking(
-          RANKING_FETCH_LIMIT
-        );
+      const result = await submitRankingScore({
+        nickname,
+        score,
+        bestCombo,
+        turn
+      });
 
-      ui.rankingWeek.textContent =
-        getCurrentWeekRange();
-
-      currentRankingUid =
-        String(
-          result?.currentUserUid ||
-          currentRankingUid ||
-          ""
-        );
-
-      const rankings =
-        Array.isArray(
-          result?.rankings
-        )
-          ? result.rankings
-          : [];
-
-      saveRankingCache(
-        rankings,
-        currentRankingUid
+      currentRankingUid = String(
+        result.uid || currentRankingUid || ""
       );
 
-      applyRankingData(
-        rankings,
-        resetPage
+      localStorage.setItem(
+        "burst8Nickname",
+        nickname
       );
+
+      /*
+       * 등록 직후 랭킹을 다시 조회하지 않는다.
+       * 이미 받아 둔 캐시에 내 기록만 반영하여 30초 조회 제한을 지킨다.
+       */
+      mergeSubmittedScoreIntoCache(
+        nickname,
+        result
+      );
+
+      ui.nicknameMessage.textContent =
+        rankingSubmitMessage(result);
+
+      window.setTimeout(() => {
+        closeNicknameModal();
+      }, 1200);
     } catch (error) {
       console.error(
-        "랭킹 조회 실패:",
+        "랭킹 등록 실패:",
         error
       );
 
-      const rankingCache =
-        readRankingCache();
+      ui.nicknameMessage.textContent =
+        error?.message === "NICKNAME_REQUIRED"
+          ? "닉네임을 입력해 주세요."
+          : "랭킹 등록에 실패했습니다. Firebase 설정과 보안 규칙을 확인해 주세요.";
 
-      if (rankingCache) {
-        currentRankingUid =
-          rankingCache.currentUserUid ||
-          currentRankingUid;
-
-        applyRankingData(
-          rankingCache.rankings,
-          resetPage
-        );
-
-        ui.rankingWeek.textContent =
-          `${getCurrentWeekRange()} · 저장된 랭킹`;
-      } else {
-        weeklyRankingItems = [];
-
-        ui.rankingList.innerHTML =
-          '<li class="ranking-empty">랭킹을 불러오지 못했습니다.</li>';
-
-        if (ui.myRankingText) {
-          ui.myRankingText.textContent =
-            "내 랭킹 확인 실패";
-        }
-
-        if (ui.rankingPagination) {
-          ui.rankingPagination.hidden =
-            true;
-        }
-      }
+      ui.nicknameMessage.classList.add("error");
+    } finally {
+      rankingSubmitting = false;
+      ui.submitRankingButton.disabled = false;
+      ui.skipRankingButton.disabled = false;
     }
   }
 
@@ -4731,7 +5095,6 @@ import {
       ui.refreshRankingButton.disabled = true;
       ui.refreshRankingButton.textContent =
         `새로고침 (${remainingSeconds}초)`;
-
       return;
     }
 
@@ -4748,16 +5111,16 @@ import {
       "새로고침";
   }
 
-  function startRankingRefreshCooldown() {
+  function startRankingRefreshCooldown(
+    startedAt = Date.now()
+  ) {
     rankingRefreshCooldownUntil =
-      Date.now() +
+      startedAt +
       RANKING_REFRESH_COOLDOWN_MS;
 
     localStorage.setItem(
       RANKING_REFRESH_STORAGE_KEY,
-      String(
-        rankingRefreshCooldownUntil
-      )
+      String(rankingRefreshCooldownUntil)
     );
 
     stopRankingRefreshTimer();
@@ -4786,29 +5149,147 @@ import {
     );
   }
 
-  async function handleRankingRefresh(event) {
+  function showRankingLoading() {
+    ui.rankingList.innerHTML =
+      '<li class="ranking-empty">주간·전체 랭킹을 불러오는 중입니다...</li>';
+
+    if (ui.myRankingText) {
+      ui.myRankingText.textContent =
+        "내 랭킹 확인 중";
+    }
+
+    if (ui.rankingPagination) {
+      ui.rankingPagination.hidden = true;
+    }
+  }
+
+  function showRankingUnavailable(message) {
+    rankingItemsByMode = {
+      weekly: [],
+      allTime: []
+    };
+
+    rankingDataLoaded = false;
+
+    ui.rankingList.innerHTML =
+      `<li class="ranking-empty">${message}</li>`;
+
+    if (ui.myRankingText) {
+      ui.myRankingText.textContent =
+        "내 랭킹 확인 불가";
+    }
+
+    if (ui.rankingPagination) {
+      ui.rankingPagination.hidden = true;
+    }
+
+    updateRankingHeader();
+  }
+
+  async function fetchRankingBundle(
+    resetPages = true,
+    showLoading = true
+  ) {
+    if (!isFirebaseConfigured()) {
+      currentRankingUid = "";
+
+      showRankingUnavailable(
+        "firebase-config.js에 프로젝트 설정값을 입력해 주세요."
+      );
+
+      return null;
+    }
+
+    if (rankingFetchPromise) {
+      return rankingFetchPromise;
+    }
+
+    if (showLoading) {
+      showRankingLoading();
+    }
+
+    const requestedAt = Date.now();
+
     /*
-     * 버튼이 폼 안으로 이동하거나 마크업이 변경돼도
-     * 브라우저의 기본 제출 동작이 실행되지 않게 막는다.
+     * 조회 시작과 동시에 공통 쿨타임을 걸어
+     * 연속 클릭이나 새로고침으로 중복 요청이 생기지 않게 한다.
      */
+    startRankingRefreshCooldown(
+      requestedAt
+    );
+
+    rankingFetchPromise =
+      (async () => {
+        try {
+          const result =
+            await getRankingBundle(
+              RANKING_FETCH_LIMIT
+            );
+
+          rankingUsingSavedCache = false;
+          rankingCacheSavedAt = requestedAt;
+
+          applyRankingBundle(
+            result,
+            resetPages
+          );
+
+          saveRankingCache(
+            requestedAt
+          );
+
+          return result;
+        } catch (error) {
+          console.error(
+            "랭킹 조회 실패:",
+            error
+          );
+
+          const rankingCache =
+            readRankingCache();
+
+          if (rankingCache) {
+            rankingUsingSavedCache = true;
+            rankingCacheSavedAt =
+              rankingCache.savedAt || 0;
+
+            applyRankingBundle(
+              rankingCache,
+              resetPages
+            );
+
+            return rankingCache;
+          }
+
+          showRankingUnavailable(
+            "랭킹을 불러오지 못했습니다."
+          );
+
+          return null;
+        } finally {
+          rankingFetchPromise = null;
+        }
+      })();
+
+    return rankingFetchPromise;
+  }
+
+  async function handleRankingRefresh(event) {
     event.preventDefault();
     event.stopPropagation();
 
     if (
-      rankingRefreshRemainingSeconds() >
-      0
+      rankingRefreshRemainingSeconds() > 0 ||
+      rankingFetchPromise
     ) {
       updateRankingRefreshButton();
       return;
     }
 
-    /*
-     * 조회가 끝나기 전부터 쿨타임을 시작해
-     * 연속 클릭으로 중복 요청이 발생하지 않게 한다.
-     */
-    startRankingRefreshCooldown();
-
-    await renderWeeklyRanking();
+    await fetchRankingBundle(
+      true,
+      true
+    );
   }
 
   /* =========================================================
@@ -7493,14 +7974,18 @@ import {
    * ======================================================= */
 
   function gameLoop(now) {
-    const deltaMilliseconds =
+    const frameDeltaMilliseconds =
       Math.min(
-        34,
-        now - previousTime || 16
+        MAX_FRAME_DELTA_MS,
+        Math.max(
+          0,
+          now - previousTime ||
+            PHYSICS_STEP_MS
+        )
       );
 
     const deltaTime =
-      deltaMilliseconds / 1000;
+      frameDeltaMilliseconds / 1000;
 
     previousTime = now;
 
@@ -7535,29 +8020,87 @@ import {
       moving &&
       !gameOver
     ) {
-      Engine.update(
-        engine,
-        deltaMilliseconds
-      );
+      physicsAccumulator +=
+        frameDeltaMilliseconds;
 
-      for (let i = 0; i < balls.length; i++) {
-        if (balls[i].specialType === "cloud") {
-          convertNearbyBallsToFour(balls[i]);
+      let physicsSteps = 0;
+      let outsideShotFinished = false;
+
+      while (
+        physicsAccumulator >=
+          PHYSICS_STEP_MS &&
+        physicsSteps <
+          MAX_PHYSICS_STEPS_PER_FRAME &&
+        moving &&
+        !gameOver
+      ) {
+        const physicsDeltaTime =
+          PHYSICS_STEP_MS / 1000;
+
+        /*
+         * 기존 게임은 60Hz를 기준으로 만들어졌으므로
+         * 감속, 겹침 분리, 미사일 유도를 모두 60Hz마다 한 번씩 실행한다.
+         */
+        applyMissileGuidance(
+          physicsDeltaTime,
+          now
+        );
+
+        Engine.update(
+          engine,
+          PHYSICS_STEP_MS
+        );
+
+        for (
+          let i = 0;
+          i < balls.length;
+          i++
+        ) {
+          if (
+            balls[i].specialType ===
+            "cloud"
+          ) {
+            convertNearbyBallsToFour(
+              balls[i]
+            );
+          }
         }
+
+        outsideShotFinished =
+          updateOutsideShot(now);
+
+        if (outsideShotFinished) {
+          physicsAccumulator = 0;
+          break;
+        }
+
+        // 기존 60Hz 게임 감각을 유지한다.
+        applyLowSpeedBraking();
+        separateStuckBalls();
+
+        /*
+         * 정상 충돌에는 개입하지 않고 완전히 이탈한 공만 복구한다.
+         */
+        stabilizeEscapedBalls();
+
+        physicsAccumulator -=
+          PHYSICS_STEP_MS;
+
+        physicsSteps++;
       }
 
       /*
-       * 미사일공은 가장 가까운 공을 추적한다.
-       * 공을 맞힐수록 유도 가속도와 최대 속도 상한이 함께 낮아진다.
+       * 화면이 장시간 멈춘 뒤 밀린 물리를 무한히 처리하지 않는다.
+       * 60Hz 네 번까지 처리한 뒤 남은 오래된 시간만 버린다.
        */
-      applyMissileGuidance(deltaTime, now);
-
-      /*
-       * 화면 밖 발사 공이 맵에 들어오지 못한 경우
-       * updateOutsideShot 내부에서 턴을 종료한다.
-       */
-      const outsideShotFinished =
-        updateOutsideShot(now);
+      if (
+        physicsSteps >=
+          MAX_PHYSICS_STEPS_PER_FRAME &&
+        physicsAccumulator >=
+          PHYSICS_STEP_MS
+      ) {
+        physicsAccumulator = 0;
+      }
 
       if (outsideShotFinished) {
         updateEffects(deltaTime);
@@ -7570,94 +8113,101 @@ import {
         return;
       }
 
-      // 기본 마찰 후 느린 공에만 추가 감속을 적용한다.
-      applyLowSpeedBraking();
+      if (physicsSteps > 0) {
+        /*
+         * 공들을 관통하던 블랙홀공이 마지막 위치에서 멈추면
+         * 그 지점을 중심으로 흡수 효과를 시작한다.
+         */
+        if (
+          activateStoppedBlackHoleBalls()
+        ) {
+          quietFrames = 0;
+          shotStartedAt = now;
+        }
 
-      /*
-       * 저속 공끼리 겹쳐 붙는 현상을 방지한다.
-       */
-      separateStuckBalls();
+        const allStopped =
+          !hasActiveSpecialEffect() &&
+          areAllBallsStopped();
 
-      /*
-       * 공들을 관통하던 블랙홀공이 마지막 위치에서 멈추면
-       * 그 지점을 중심으로 흡수 효과를 시작한다.
-       */
-      if (activateStoppedBlackHoleBalls()) {
-        quietFrames = 0;
-        shotStartedAt = now;
-      }
+        quietFrames = allStopped
+          ? quietFrames +
+            physicsSteps
+          : 0;
 
-      const allStopped =
-        !hasActiveSpecialEffect() &&
-        areAllBallsStopped();
-
-      quietFrames = allStopped
-        ? quietFrames + 1
-        : 0;
-
-      if (
-        !hasActiveSpecialEffect() &&
-        (
-          quietFrames >=
-            REQUIRED_QUIET_FRAMES ||
+        if (
+          !hasActiveSpecialEffect() &&
           (
-            now - shotStartedAt >=
-              MAX_SHOT_DURATION_MS &&
-            !balls.some(
-              ball =>
-                ball.specialType === "missile" &&
-                !ball.missileFinished
+            quietFrames >=
+              REQUIRED_QUIET_FRAMES ||
+            (
+              now - shotStartedAt >=
+                MAX_SHOT_DURATION_MS &&
+              !balls.some(
+                ball =>
+                  ball.specialType ===
+                    "missile" &&
+                  !ball.missileFinished
+              )
             )
           )
-        )
-      ) {
-        /*
-         * 구름공이 두 번째 벽에 닿지 않고 바닥이나 공 사이에서
-         * 멈춘 경우에도 턴을 바로 끝내지 않는다.
-         * 먼저 구름공을 폭발시킨 뒤 폭발로 밀려난 공의 움직임을
-         * 다시 물리 엔진에서 처리한다.
-         */
-        const remainingBlackHoleBalls =
-          balls.filter(
-            ball =>
-              ball.specialType === "blackHole" &&
-              !ball.blackHoleActivated
-          );
-
-        const stoppedCloudBalls =
-          balls.filter(
-            ball =>
-              ball.specialType === "cloud"
-          );
-
-        if (remainingBlackHoleBalls.length > 0) {
-          for (
-            let i = 0;
-            i < remainingBlackHoleBalls.length;
-            i++
-          ) {
-            triggerBlackHoleBall(
-              remainingBlackHoleBalls[i]
+        ) {
+          /*
+           * 구름공이 두 번째 벽에 닿지 않고 바닥이나 공 사이에서
+           * 멈춘 경우에도 턴을 바로 끝내지 않는다.
+           * 먼저 구름공을 폭발시킨 뒤 폭발로 밀려난 공의 움직임을
+           * 다시 물리 엔진에서 처리한다.
+           */
+          const remainingBlackHoleBalls =
+            balls.filter(
+              ball =>
+                ball.specialType ===
+                  "blackHole" &&
+                !ball.blackHoleActivated
             );
-          }
 
-          quietFrames = 0;
-          shotStartedAt = now;
-        } else if (stoppedCloudBalls.length > 0) {
-          for (
-            let i = 0;
-            i < stoppedCloudBalls.length;
-            i++
-          ) {
-            detonateCloudBall(
-              stoppedCloudBalls[i]
+          const stoppedCloudBalls =
+            balls.filter(
+              ball =>
+                ball.specialType ===
+                "cloud"
             );
-          }
 
-          quietFrames = 0;
-          shotStartedAt = now;
-        } else {
-          finishTurn();
+          if (
+            remainingBlackHoleBalls.length >
+            0
+          ) {
+            for (
+              let i = 0;
+              i <
+                remainingBlackHoleBalls.length;
+              i++
+            ) {
+              triggerBlackHoleBall(
+                remainingBlackHoleBalls[i]
+              );
+            }
+
+            quietFrames = 0;
+            shotStartedAt = now;
+          } else if (
+            stoppedCloudBalls.length > 0
+          ) {
+            for (
+              let i = 0;
+              i <
+                stoppedCloudBalls.length;
+              i++
+            ) {
+              detonateCloudBall(
+                stoppedCloudBalls[i]
+              );
+            }
+
+            quietFrames = 0;
+            shotStartedAt = now;
+          } else {
+            finishTurn();
+          }
         }
       }
     }
@@ -7714,12 +8264,34 @@ import {
     handleRankingRefresh
   );
 
+  if (ui.weeklyRankingTab) {
+    ui.weeklyRankingTab.addEventListener(
+      "click",
+      () => {
+        setRankingMode(
+          RANKING_MODE.WEEKLY
+        );
+      }
+    );
+  }
+
+  if (ui.allTimeRankingTab) {
+    ui.allTimeRankingTab.addEventListener(
+      "click",
+      () => {
+        setRankingMode(
+          RANKING_MODE.ALL_TIME
+        );
+      }
+    );
+  }
+
   if (ui.rankingPrevButton) {
     ui.rankingPrevButton.addEventListener(
       "click",
       () => {
         setRankingPage(
-          rankingCurrentPage - 1
+          activeRankingPage() - 1
         );
       }
     );
@@ -7730,7 +8302,7 @@ import {
       "click",
       () => {
         setRankingPage(
-          rankingCurrentPage + 1
+          activeRankingPage() + 1
         );
       }
     );
@@ -7846,50 +8418,74 @@ import {
   resetGame();
 
   /*
-  * 먼저 localStorage에 저장된
-  * 랭킹 새로고침 쿨타임을 복원한다.
-  */
+   * 주간·전체 랭킹 통합 캐시를 먼저 복원한다.
+   * 캐시가 30초 안에 저장된 데이터라면 남은 쿨타임도 함께 복원한다.
+   */
+  const initialRankingCache =
+    readRankingCache();
+
+  if (initialRankingCache) {
+    rankingCacheSavedAt =
+      initialRankingCache.savedAt || 0;
+
+    const cacheCooldownUntil =
+      initialRankingCache.savedAt +
+      RANKING_REFRESH_COOLDOWN_MS;
+
+    if (
+      cacheCooldownUntil >
+      rankingRefreshCooldownUntil
+    ) {
+      rankingRefreshCooldownUntil =
+        cacheCooldownUntil;
+
+      localStorage.setItem(
+        RANKING_REFRESH_STORAGE_KEY,
+        String(
+          rankingRefreshCooldownUntil
+        )
+      );
+    }
+
+    rankingUsingSavedCache = false;
+
+    applyRankingBundle(
+      initialRankingCache,
+      true
+    );
+  } else {
+    updateRankingHeader();
+  }
+
   restoreRankingRefreshCooldown();
 
   /*
-   * 새로고침 쿨타임이 남아 있을 때는
-   * Firebase에 다시 요청하지 않고 마지막 랭킹 캐시를 보여준다.
+   * 쿨타임이 남아 있으면 페이지를 새로고침해도 캐시만 사용한다.
+   * 쿨타임이 끝났을 때만 주간·전체 랭킹을 한꺼번에 다시 조회한다.
    */
   if (
-    rankingRefreshRemainingSeconds() >
-    0
+    rankingRefreshRemainingSeconds() <= 0
   ) {
-    ui.rankingWeek.textContent =
-      getCurrentWeekRange();
-
-    const rankingCache =
-      readRankingCache();
-
-    if (rankingCache) {
-      currentRankingUid =
-        rankingCache.currentUserUid ||
-        currentRankingUid;
-
-      applyRankingData(
-        rankingCache.rankings
-      );
-    } else {
-      ui.rankingList.innerHTML =
-        '<li class="ranking-empty">새로고침 쿨타임이 끝나면 랭킹을 불러올 수 있습니다.</li>';
-
-      updateMyRankingDisplay();
-    }
-  } else {
-    renderWeeklyRanking();
+    fetchRankingBundle(
+      true,
+      !initialRankingCache
+    );
+  } else if (!initialRankingCache) {
+    showRankingUnavailable(
+      "새로고침 쿨타임이 끝나면 랭킹을 불러올 수 있습니다."
+    );
   }
 
-  if (isFirebaseConfigured()) {
+  if (
+    isFirebaseConfigured() &&
+    !currentRankingUid
+  ) {
     getCurrentRankingUserId()
       .then(uid => {
         currentRankingUid =
           String(uid || "");
 
-        if (weeklyRankingItems.length > 0) {
+        if (rankingDataLoaded) {
           renderRankingPage();
         } else {
           updateMyRankingDisplay();

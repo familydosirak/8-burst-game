@@ -2,20 +2,57 @@ rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
+
+    /*
+     * 주간 랭킹
+     * weeklyRankings/{주차}/scores/{사용자 UID}
+     */
     match /weeklyRankings/{weekId}/scores/{userId} {
       allow read: if request.auth != null;
 
-      allow create: if isValidScore(userId, weekId);
+      allow create: if isValidWeeklyScore(
+        userId,
+        weekId
+      );
 
-      allow update: if isValidScore(userId, weekId)
-        && request.resource.data.score >= resource.data.score;
+      allow update: if isValidWeeklyScore(
+        userId,
+        weekId
+      )
+      && request.resource.data.score >=
+         resource.data.score;
 
       allow delete: if false;
     }
 
-    function isValidScore(userId, weekId) {
-      return request.auth != null
-        && request.auth.uid == userId
+    /*
+     * 전체 랭킹
+     * allTimeRankings/{사용자 UID}
+     */
+    match /allTimeRankings/{userId} {
+      allow read: if request.auth != null;
+
+      allow create: if isValidAllTimeScore(
+        userId
+      );
+
+      allow update: if isValidAllTimeScore(
+        userId
+      )
+      && request.resource.data.score >=
+         resource.data.score;
+
+      allow delete: if false;
+    }
+
+    /*
+     * 주간 랭킹 데이터 검사
+     */
+    function isValidWeeklyScore(
+      userId,
+      weekId
+    ) {
+      return isValidCommonScore(userId)
         && request.resource.data.keys().hasOnly([
           'uid',
           'nickname',
@@ -25,20 +62,76 @@ service cloud.firestore {
           'weekId',
           'updatedAt'
         ])
-        && request.resource.data.uid == request.auth.uid
-        && request.resource.data.weekId == weekId
-        && request.resource.data.nickname is string
-        && request.resource.data.nickname.size() >= 1
-        && request.resource.data.nickname.size() <= 12
-        && request.resource.data.score is int
-        && request.resource.data.score >= 0
-        && request.resource.data.score <= 1000000000000
-        && request.resource.data.bestCombo is int
-        && request.resource.data.bestCombo >= 0
-        && request.resource.data.bestCombo <= 1000000
-        && request.resource.data.turn is int
-        && request.resource.data.turn >= 0
-        && request.resource.data.turn <= 1000000;
+        && request.resource.data.weekId ==
+           weekId;
+    }
+
+    /*
+     * 전체 랭킹 데이터 검사
+     *
+     * sourceWeekId는 해당 전체 최고 점수가
+     * 어느 주에 기록됐는지 저장하는 값이다.
+     */
+    function isValidAllTimeScore(
+      userId
+    ) {
+      return isValidCommonScore(userId)
+        && request.resource.data.keys().hasOnly([
+          'uid',
+          'nickname',
+          'score',
+          'bestCombo',
+          'turn',
+          'sourceWeekId',
+          'updatedAt'
+        ])
+        && request.resource.data.sourceWeekId
+           is string
+        && request.resource.data.sourceWeekId.size()
+           >= 1
+        && request.resource.data.sourceWeekId.size()
+           <= 20;
+    }
+
+    /*
+     * 주간·전체 랭킹 공통 데이터 검사
+     */
+    function isValidCommonScore(
+      userId
+    ) {
+      return request.auth != null
+        && request.auth.uid == userId
+
+        && request.resource.data.uid ==
+           request.auth.uid
+
+        && request.resource.data.nickname
+           is string
+        && request.resource.data.nickname.size()
+           >= 1
+        && request.resource.data.nickname.size()
+           <= 12
+
+        && request.resource.data.score
+           is int
+        && request.resource.data.score
+           >= 0
+        && request.resource.data.score
+           <= 1000000000000
+
+        && request.resource.data.bestCombo
+           is int
+        && request.resource.data.bestCombo
+           >= 0
+        && request.resource.data.bestCombo
+           <= 10000000
+
+        && request.resource.data.turn
+           is int
+        && request.resource.data.turn
+           >= 0
+        && request.resource.data.turn
+           <= 1000000;
     }
   }
 }
